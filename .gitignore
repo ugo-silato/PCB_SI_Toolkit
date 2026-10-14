@@ -1,0 +1,11 @@
+# Cache di Python
+__pycache__/
+*.pyc
+# Impostazioni personali e file di diagnostica creati dal plugin
+settings.json
+si_toolkit_settings.json
+dc_diagnostics.txt
+# Risultati delle simulazioni openEMS e pacchetti generati
+openems_runs/
+sim_*/
+*.zip

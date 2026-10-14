@@ -1,0 +1,76 @@
+# -*- coding: utf-8 -*-
+"""
+Crea il pacchetto per il "Gestore di plugin e contenuti" (PCM) di KiCad.
+
+Struttura richiesta dal PCM:
+    metadata.json          descrizione del pacchetto (nome, versione, ...)
+    plugins/               i file del plugin, direttamente qui (con __init__.py)
+    resources/icon.png     icona 64x64 mostrata nell'elenco del PCM
+
+Uso:  python build_pcm.py [cartella_di_uscita]
+Il file creato si installa da KiCad: Gestore di plugin e contenuti ->
+"Installa da file...".
+"""
+import json
+import os
+import sys
+import zipfile
+
+PLUGIN_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+VERSION = "1.0.0"
+
+METADATA = {
+    "$schema": "https://go.kicad.org/pcm/schemas/v2",
+    "name": "PCB Signal Integrity Toolkit",
+    "description": "Return path, DC current/IR drop, impedance, diff pairs, crosstalk, openEMS EM simulation.",
+    "description_full": (
+        "Signal and power integrity checks on the open board:\n"
+        "- Return Path: tracks crossing gaps in the reference plane\n"
+        "- DC Current: current, IR drop and IPC-2221 limit on tracks and vias, multiple loads, color map\n"
+        "- Impedance: Z0 with a 2D field solver from the board stackup (coplanar, solder mask)\n"
+        "- Diff. pairs: Zdiff and common-mode Z with the field solver\n"
+        "- Crosstalk: parallel runs and estimated NEXT\n"
+        "- openEMS: 3D FDTD simulation of a line (S-parameters, impedance, TDR/TDT, field GIFs);"
+        " requires openEMS and a Python with numpy/h5py/matplotlib\n"
+        "Interface in English and Italian."
+    ),
+    "identifier": "com.github.ugo-silato.sitoolkit",
+    "type": "plugin",
+    "author": {"name": "Ugo Silato"},
+    "license": "MIT",
+    "resources": {"homepage": "https://github.com/ugo-silato/PCB_SI_Toolkit"},
+    "versions": [
+        {
+            "version": VERSION,
+            "status": "stable",
+            "kicad_version": "10.0",
+        }
+    ],
+}
+
+# Cosa NON va nel pacchetto: cache Python, impostazioni personali, strumenti
+# di sviluppo (questa cartella), file di prova e diagnostica
+EXCLUDE_DIRS = {"__pycache__", "tools"}
+EXCLUDE_FILES = {"settings.json", "dc_diagnostics.txt", "icon_64.png"}
+
+
+def build(out_dir):
+    out = os.path.join(out_dir, f"si_toolkit_pcm_{VERSION}.zip")
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("metadata.json", json.dumps(METADATA, indent=4))
+        # Icona 64x64 per l'elenco del PCM
+        z.write(os.path.join(PLUGIN_DIR, "icon_64.png"), "resources/icon.png")
+        # File del plugin direttamente sotto plugins/
+        for root, dirs, files in os.walk(PLUGIN_DIR):
+            dirs[:] = [d for d in dirs if d not in EXCLUDE_DIRS]
+            for name in files:
+                if name in EXCLUDE_FILES or name.endswith((".pyc", ".txt", ".log")):
+                    continue
+                full = os.path.join(root, name)
+                rel = os.path.relpath(full, PLUGIN_DIR).replace(os.sep, "/")
+                z.write(full, "plugins/" + rel)
+    return out
+
+
+if __name__ == "__main__":
+    print("Creato", build(sys.argv[1] if len(sys.argv) > 1 else os.getcwd()))
