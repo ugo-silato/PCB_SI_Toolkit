@@ -59,6 +59,7 @@ The plugin does **not** install openEMS. All other tabs work with KiCad's own Py
 ## License
 [MIT](LICENSE) © 2026 Ugo Silato
 
+## Code comments translated by Claude
 ---
 
 ## In italiano
