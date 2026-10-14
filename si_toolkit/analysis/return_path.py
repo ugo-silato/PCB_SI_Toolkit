@@ -1,26 +1,26 @@
 """
-Modulo "Return Path Checker".
+"Return Path Checker" module.
 
-Idea di base: il ritorno di corrente ad alta frequenza di una traccia di
-segnale scorre nel piano di riferimento immediatamente adiacente (sopra
-o sotto), seguendo il percorso della traccia stessa per minimizzare
-l'area del loop. Se in un tratto del percorso il piano è assente (split,
-foro, area isolata) il ritorno deve "saltare" lateralmente, aumentando
-area di loop, EMI e impedenza vista dal segnale.
+Basic idea: the high-frequency return current of a signal track flows in
+the immediately adjacent reference plane (above or below), following the
+path of the track itself to minimize the loop area. If along part of the
+path the plane is missing (split, hole, isolated area) the return has to
+"jump" sideways, increasing loop area, EMI and the impedance seen by the
+signal.
 
-Questo modulo NON fa un vero solve a campi elettromagnetici: è un
-controllo geometrico di continuità. Per ogni traccia misura il GAP
-CONTINUO più lungo (in mm) in cui il piano di riferimento manca sotto
-(o sopra) la traccia, e segnala solo i gap sopra una soglia.
+This module does NOT run a real electromagnetic field solve: it is a
+geometric continuity check. For each track it measures the longest
+CONTINUOUS GAP (in mm) where the reference plane is missing below (or
+above) the track, and reports only the gaps above a threshold.
 
-Perché il gap e non il numero di punti scoperti:
-- su una board a 2 layer il pour del lato opposto viene interrotto da
-  ogni traccia che lo attraversa; un incrocio perpendicolare crea un gap
-  di mezzo millimetro, praticamente innocuo, mentre un gap di 10-20 mm
-  sotto una traccia veloce è un problema vero;
-- i fori di clearance attorno a pad e via della stessa net non sono
-  discontinuità del ritorno (la corrente passa dalla via stessa), quindi
-  i punti vicini a questi elementi vengono ignorati.
+Why the gap and not the number of uncovered points:
+- on a 2-layer board the pour on the opposite side is interrupted by every
+  track crossing it; a perpendicular crossing creates a gap of half a
+  millimeter, practically harmless, while a 10-20 mm gap under a fast
+  track is a real problem;
+- the clearance holes around pads and vias of the same net are not
+  discontinuities of the return (the current goes through the via
+  itself), so the points near those elements are ignored.
 """
 from dataclasses import dataclass, field
 
@@ -29,41 +29,41 @@ import pcbnew
 from ..common import geometry
 from ..common.i18n import _
 
-# Distanza di campionamento lungo la traccia (0.5 mm) e tetto massimo di
-# campioni per traccia (le tracce molto lunghe vengono campionate più
-# rado ma con un limite fisso al costo di calcolo)
+# Sampling distance along the track (0.5 mm) and maximum number of samples per
+# track (very long tracks are sampled more sparsely, with a fixed cap on the
+# computing cost)
 SAMPLE_STEP_NM = pcbnew.FromMM(0.5)
 MAX_SAMPLES_PER_TRACK = 200
 
-# Raggio di ricerca per una via di stitching vicino a un tratto scoperto:
-# se c'è una via sulla net di riferimento entro questo raggio, il ritorno
-# può comunque passare lì vicino, quindi il problema è "minore"
+# Search radius for a stitching via near an uncovered stretch: if there is a
+# via on the reference net within this radius, the return can still pass
+# nearby, so the problem is "minor"
 STITCHING_SEARCH_RADIUS_NM = pcbnew.FromMM(3.0)
 
-# Raggio attorno a pad e via della STESSA net della traccia entro cui un
-# punto scoperto viene ignorato (foro di clearance nel piano)
+# Radius around pads and vias of the SAME net as the track within which an
+# uncovered point is ignored (clearance hole in the plane)
 HOLE_EXCLUSION_RADIUS_NM = pcbnew.FromMM(1.0)
 
-# Gap minimo (mm) per segnalare una traccia, se non specificato dalla GUI
+# Minimum gap (mm) to report a track, if not given by the GUI
 DEFAULT_MIN_GAP_MM = 5.0
 
 
 @dataclass
 class ReturnPathIssue:
-    """Un problema di continuità rilevato su una traccia."""
+    """A continuity problem found on a track."""
 
-    track: object  # riferimento all'oggetto PCB_TRACK di pcbnew
-    uncovered_points: list = field(default_factory=list)  # solo gap sopra soglia
+    track: object  # reference to the pcbnew PCB_TRACK object
+    uncovered_points: list = field(default_factory=list)  # only gaps above the threshold
     max_gap_mm: float = 0.0
     has_nearby_stitching_via: bool = False
-    # Net reale del piano di riferimento e nome del layer su cui il piano
-    # risulta interrotto (mostrati nella colonna "Riferimento" della GUI)
+    # Actual net of the reference plane and name of the layer where the plane
+    # is interrupted (shown in the "Reference" column of the GUI)
     ref_net: str = ""
     ref_layer_name: str = ""
 
     @property
     def track_layer_name(self):
-        # Nome del layer su cui sta la traccia (es. "B.Cu")
+        # Name of the layer the track is on (e.g. "B.Cu")
         return self.track.GetLayerName()
 
     @property
@@ -77,14 +77,14 @@ class ReturnPathIssue:
 
 def _copper_layer_stack(board):
     """
-    Lista dei layer di rame abilitati, dal più esterno (top) al più
-    interno (bottom), nell'ordine fisico dello stack-up.
+    List of the enabled copper layers, from the outermost (top) to the
+    innermost (bottom), in the physical order of the stackup.
     """
     return list(board.GetEnabledLayers().CuStack())
 
 
 def _adjacent_layers(board, layer_id):
-    """Layer di rame fisicamente adiacenti a 'layer_id' (sopra e/o sotto)."""
+    """Copper layers physically adjacent to 'layer_id' (above and/or below)."""
     stack = _copper_layer_stack(board)
     try:
         idx = stack.index(layer_id)
@@ -101,15 +101,14 @@ def _adjacent_layers(board, layer_id):
 
 def _build_indexes(board):
     """
-    Precalcola UNA SOLA VOLTA due indici, per non scansionare la board
-    per ogni punto:
-    - via_index: solo le via, tuple (posizione, net), per il controllo
-      di stitching;
-    - hole_index: via + pad, tuple (posizione, net), per ignorare i fori
-      di clearance attorno a elementi della stessa net della traccia.
+    Precomputes ONCE two indexes, so the board is not scanned for every
+    point:
+    - via_index: vias only, tuples (position, net), for the stitching check;
+    - hole_index: vias + pads, tuples (position, net), to ignore the clearance
+      holes around elements of the same net as the track.
 
-    NOTA: si usa Type() == ... e non IsType([...]) perché IsType con la
-    lista fallisce con un errore SWIG in questa build di KiCad 10.
+    NOTE: Type() == ... is used instead of IsType([...]) because IsType with a
+    list fails with a SWIG error in this KiCad 10 build.
     """
     via_index = []
     hole_index = []
@@ -125,7 +124,7 @@ def _build_indexes(board):
 
 
 def _near_item_on_net(index, point, net_name, radius_nm):
-    """Vero se nell'indice c'è un elemento della net data entro il raggio."""
+    """True if the index has an element of the given net within the radius."""
     r2 = radius_nm * radius_nm
     for pos, net in index:
         if net != net_name:
@@ -139,9 +138,9 @@ def _near_item_on_net(index, point, net_name, radius_nm):
 
 def _uncovered_runs(flags):
     """
-    Dato un elenco di booleani (True = punto scoperto) ritorna la lista
-    dei tratti consecutivi scoperti come tuple (indice_inizio, indice_fine)
-    con fine inclusa.
+    Given a list of booleans (True = uncovered point) returns the list of
+    consecutive uncovered stretches as tuples (start_index, end_index), end
+    included.
     """
     runs = []
     start = None
@@ -164,29 +163,29 @@ def analyze_board(
     should_cancel=None,
 ):
     """
-    Analizza le tracce di segnale e ritorna la lista di ReturnPathIssue
-    (ordinata dal gap più lungo al più corto).
+    Analyzes the signal tracks and returns the list of ReturnPathIssue
+    (sorted from the longest gap to the shortest).
 
-    reference_net_filter: sottostringa che identifica le zone di piano di
-    riferimento (default "GND").
+    reference_net_filter: substring identifying the reference plane zones
+    (default "GND").
 
-    min_gap_mm: lunghezza minima (mm) di un tratto continuo senza piano
-    perché la traccia venga segnalata.
+    min_gap_mm: minimum length (mm) of a continuous stretch without plane for
+    the track to be reported.
 
-    progress_callback(indice, totale): chiamata dopo ogni traccia; la GUI
-    la usa anche per processare gli eventi (wx.Yield()).
+    progress_callback(index, total): called after each track; the GUI also
+    uses it to process events (wx.Yield()).
 
-    should_cancel(): se ritorna True l'analisi si ferma e restituisce
-    quanto trovato fino a quel momento.
+    should_cancel(): if it returns True the analysis stops and returns what
+    was found so far.
     """
     issues = []
-    # Type() == ... invece di IsType([...]) (vedi _build_indexes)
+    # Type() == ... instead of IsType([...]) (see _build_indexes)
     tracks = [t for t in board.GetTracks() if t.Type() == pcbnew.PCB_TRACE_T]
     total = len(tracks)
 
     via_index, hole_index = _build_indexes(board)
 
-    # Cache delle zone di riferimento per layer
+    # Cache of the reference zones per layer
     zones_cache = {}
 
     def get_reference_zones(layer_id):
@@ -202,17 +201,16 @@ def analyze_board(
         if should_cancel and should_cancel():
             break
 
-        # Le tracce sulla net di riferimento non sono "segnale"
+        # The tracks on the reference net are not "signal"
         if reference_net_filter.upper() in track.GetNetname().upper():
             continue
 
         layer_id = track.GetLayer()
 
-        # Layer adiacenti che hanno almeno una zona di riferimento. Ognuno
-        # viene controllato SEPARATAMENTE: su 4+ layer una traccia interna
-        # ha un piano sopra e uno sotto, e l'interruzione puo' riguardare
-        # solo uno dei due. Ogni coppia (traccia, layer) e' un possibile
-        # problema a se' stante.
+        # Adjacent layers that have at least one reference zone. Each is
+        # checked SEPARATELY: on 4+ layers an inner track has a plane above and
+        # one below, and the interruption may concern only one of them. Each
+        # (track, layer) pair is a separate potential problem.
         ref_candidates = []
         for candidate_layer in _adjacent_layers(board, layer_id):
             candidate_zones = get_reference_zones(candidate_layer)
@@ -220,7 +218,7 @@ def analyze_board(
                 ref_candidates.append((candidate_layer, candidate_zones))
 
         if not ref_candidates:
-            continue  # nessun piano di riferimento per questa traccia
+            continue  # no reference plane for this track
 
         points = geometry.sample_points_along_track(
             track, SAMPLE_STEP_NM, MAX_SAMPLES_PER_TRACK
@@ -228,14 +226,14 @@ def analyze_board(
         if len(points) < 2:
             continue
 
-        # Distanza fra due campioni consecutivi (mm): serve a convertire
-        # il numero di campioni consecutivi scoperti in lunghezza del gap
+        # Distance between two consecutive samples (mm): used to convert the
+        # number of consecutive uncovered samples into a gap length
         track_len_mm = pcbnew.ToMM(track.GetLength())
         step_mm = track_len_mm / (len(points) - 1)
         net_name = track.GetNetname()
 
-        # I punti vicini a pad/via della stessa net (fori di clearance) non
-        # dipendono dal layer: si calcolano una volta per traccia
+        # The points near pads/vias of the same net (clearance holes) do not
+        # depend on the layer: computed once per track
         near_hole = [
             _near_item_on_net(hole_index, p, net_name, HOLE_EXCLUSION_RADIUS_NM)
             for p in points
@@ -245,20 +243,21 @@ def analyze_board(
             flags = []
             for p, is_hole in zip(points, near_hole):
                 if is_hole:
-                    flags.append(False)  # foro di clearance: non e' un gap vero
+                    flags.append(False)  # clearance hole: not a real gap
                 else:
                     flags.append(
                         not geometry.point_covered_by_any_zone(ref_zones, ref_layer, p)
                     )
 
-            # Tratti continui scoperti; teniamo solo quelli sopra soglia
+            # Continuous uncovered stretches; only those above the threshold
+            # are kept
             bad_points = []
             max_gap = 0.0
             for start, end in _uncovered_runs(flags):
-                # Ogni campione "rappresenta" un passo di traccia, quindi un
-                # tratto di k campioni consecutivi vale circa k * step. Con
-                # tutti i punti scoperti darebbe lunghezza + 1 passo, quindi
-                # si limita il gap alla lunghezza reale della traccia.
+                # Each sample "represents" one track step, so a stretch of k
+                # consecutive samples is worth about k * step. With all points
+                # uncovered it would give length + 1 step, so the gap is capped
+                # at the actual track length.
                 gap_mm = min((end - start + 1) * step_mm, track_len_mm)
                 if gap_mm >= min_gap_mm:
                     bad_points.extend(points[start : end + 1])
@@ -287,12 +286,12 @@ def analyze_board(
 
 def diagnose_track(board, track, reference_net_filter, log_path):
     """
-    Diagnostica di una singola traccia, scritta su file di testo.
+    Diagnostics of a single track, written to a text file.
 
-    Ogni passo viene scritto su disco (flush + fsync) PRIMA di eseguire la
-    chiamata successiva: se una chiamata API manda in crash KiCad, l'ultima
-    riga del file dice quale era. Ogni chiamata e' anche in try/except,
-    cosi' le eccezioni Python normali finiscono nel log senza fermare il resto.
+    Each step is written to disk (flush + fsync) BEFORE running the next call:
+    if an API call crashes KiCad, the last line of the file tells which one it
+    was. Each call is also in a try/except, so ordinary Python exceptions end
+    up in the log without stopping the rest.
     """
     import os
 
@@ -304,7 +303,7 @@ def diagnose_track(board, track, reference_net_filter, log_path):
         os.fsync(f.fileno())
 
     def attempt(label, func):
-        # Scrive l'etichetta, esegue, scrive il risultato o l'eccezione
+        # Writes the label, runs, writes the result or the exception
         log(f"-> {label}")
         try:
             result = func()
@@ -322,11 +321,11 @@ def diagnose_track(board, track, reference_net_filter, log_path):
         adj = _adjacent_layers(board, layer)
         log(_("Layer adiacenti: ") + ", ".join(board.GetLayerName(a) for a in adj))
 
-        # Punti di prova: inizio, meta', fine (uso un VECTOR2I fresco)
+        # Test points: start, middle, end (a fresh VECTOR2I is used)
         pts = geometry.sample_points_along_track(track, pcbnew.FromMM(5), 4)
         log(_("Punti di prova: {0}").format(len(pts)))
 
-        # Elenco di TUTTE le zone, solo con chiamate semplici
+        # List of ALL the zones, with simple calls only
         log(_("--- Zone sulla board ---"))
         zones = list(board.Zones())
         for n, z in enumerate(zones):
@@ -337,12 +336,12 @@ def diagnose_track(board, track, reference_net_filter, log_path):
             attempt(_("zona {0} IsFilled").format(n), lambda: z.IsFilled())
             attempt(_("zona {0} GetZoneName").format(n), lambda: z.GetZoneName())
 
-        # Test di copertura, un metodo alla volta, dal meno rischioso
+        # Coverage test, one method at a time, from the least risky
         log(_("--- Test copertura ---"))
         for n, z in enumerate(zones):
             if not any(z.IsOnLayer(a) for a in adj):
                 continue
-            # Solo zone della net di riferimento (sono 240+ sulla board)
+            # Only the zones of the reference net (240+ on the board)
             if reference_net_filter.upper() not in z.GetNetname().upper():
                 continue
             ref_l = [a for a in adj if z.IsOnLayer(a)][0]
@@ -370,13 +369,13 @@ def diagnose_track(board, track, reference_net_filter, log_path):
 def highlight_issues(board, issues, severe_layer=pcbnew.User_1,
                      minor_layer=pcbnew.User_2):
     """
-    Disegna un piccolo cerchio (PCB_SHAPE) in ogni punto dei tratti
-    scoperti, su due layer grafici diversi (non elettrici), cosi' i due
-    casi hanno colori diversi in Pcbnew:
-    - 'severe_layer' (User.1): nessuna via di stitching vicina,
-      il ritorno di corrente non ha un percorso alternativo;
-    - 'minor_layer' (User.2): c'e' una via di stitching vicina.
-    Il colore e' quello del layer, impostabile nel pannello Aspetto.
+    Draws a small circle (PCB_SHAPE) at every point of the uncovered stretches,
+    on two different graphic (non-electrical) layers, so the two cases have
+    different colors in Pcbnew:
+    - 'severe_layer' (User.1): no stitching via nearby, the return current has
+      no alternative path;
+    - 'minor_layer' (User.2): there is a stitching via nearby.
+    The color is the layer color, which can be set in the Appearance panel.
     """
     marker_radius_nm = pcbnew.FromMM(0.3)
 
@@ -386,7 +385,7 @@ def highlight_issues(board, issues, severe_layer=pcbnew.User_1,
             marker = pcbnew.PCB_SHAPE(board)
             marker.SetShape(pcbnew.SHAPE_T_CIRCLE)
             marker.SetFilled(True)
-            # Layer (e quindi colore) secondo la gravita'
+            # Layer (and therefore color) according to severity
             marker.SetLayer(minor_layer if issue.has_nearby_stitching_via else severe_layer)
             marker.SetCenter(point)
             marker.SetEnd(pcbnew.VECTOR2I(point.x + marker_radius_nm, point.y))
@@ -395,8 +394,8 @@ def highlight_issues(board, issues, severe_layer=pcbnew.User_1,
             created_markers.append(marker)
 
     pcbnew.Refresh()
-    # Forza anche il ridisegno dell'interfaccia: senza, in alcune build i
-    # nuovi oggetti non compaiono finche' non si sposta la vista
+    # Also forces the interface to redraw: without it, in some builds the new
+    # objects do not show up until the view is moved
     try:
         pcbnew.UpdateUserInterface()
     except Exception:
@@ -405,7 +404,7 @@ def highlight_issues(board, issues, severe_layer=pcbnew.User_1,
 
 
 def clear_highlight(board, markers):
-    """Rimuove dalla board tutti i marker creati da highlight_issues."""
+    """Removes from the board all the markers created by highlight_issues."""
     for marker in markers:
         board.Remove(marker)
     pcbnew.Refresh()

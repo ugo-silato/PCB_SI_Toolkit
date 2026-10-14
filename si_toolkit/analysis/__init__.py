@@ -1,1 +1,1 @@
-"""Moduli di analisi del plugin (uno per tipo di verifica)."""
+"""Analysis modules of the plugin (one per type of check)."""

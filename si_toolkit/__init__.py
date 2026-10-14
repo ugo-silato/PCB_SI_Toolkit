@@ -1,12 +1,12 @@
 """
-Punto di ingresso del plugin "PCB Signal Integrity Toolkit" per KiCad.
+Entry point of the "PCB Signal Integrity Toolkit" plugin for KiCad.
 
-KiCad carica questo file quando scansiona la cartella scripting/plugins
-(o 3rdparty/plugins) all'avvio. Qui registriamo l'azione del plugin con
-pcbnew.ActionPlugin: è il meccanismo standard per aggiungere una voce al
-menu "Strumenti > Plugin Esterni" di Pcbnew.
+KiCad loads this file when it scans the scripting/plugins folder
+(or 3rdparty/plugins) at startup. Here the plugin action is registered with
+pcbnew.ActionPlugin: the standard way to add an entry to Pcbnew's
+"Tools > External Plugins" menu.
 """
 from .action import SIToolkitPlugin
 
-# pcbnew vuole un'ISTANZA (non la classe) con register() chiamato su di essa.
+# pcbnew wants an INSTANCE (not the class) with register() called on it.
 SIToolkitPlugin().register()

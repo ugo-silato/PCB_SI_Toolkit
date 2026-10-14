@@ -1,1 +1,1 @@
-"""Utilità condivise fra i moduli di analisi del plugin."""
+"""Utilities shared by the plugin's analysis modules."""

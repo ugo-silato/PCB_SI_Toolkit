@@ -1,7 +1,7 @@
 """
-Azione principale del plugin: definisce voce di menu, icona e cosa
-succede quando l'utente clicca sulla voce dal menu "Plugin Esterni" di
-Pcbnew (o sul bottone nella toolbar, se abilitato).
+Main plugin action: defines the menu entry, the icon and what happens when
+the user clicks the entry in Pcbnew's "External Plugins" menu (or the
+toolbar button, if enabled).
 """
 import os
 
@@ -13,16 +13,16 @@ from .gui.dialog import SIToolkitDialog
 
 class SIToolkitPlugin(pcbnew.ActionPlugin):
     """
-    Sottoclasse di ActionPlugin: è l'interfaccia che Pcbnew usa per
-    sapere come mostrare il plugin nel menu e cosa eseguire al click.
+    ActionPlugin subclass: the interface Pcbnew uses to know how to show the
+    plugin in the menu and what to run on click.
     """
 
     def defaults(self):
-        # Testo e descrizione mostrati nel menu "Strumenti > Plugin Esterni"
+        # Text and description shown in the "Tools > External Plugins" menu
         self.name = "PCB Signal Integrity Toolkit"
         self.category = "Signal/Power Integrity"
-        # Descrizione nella lingua scelta nella scheda Opzioni (file impostazioni)
-        lang = "en"  # default: inglese
+        # Description in the language chosen in the Options tab (settings file)
+        lang = "en"  # default: English
         try:
             import json
 
@@ -40,20 +40,20 @@ class SIToolkitPlugin(pcbnew.ActionPlugin):
                                 "differenziali, crosstalk e simulazione openEMS sulla board")
         self.show_toolbar_button = True
 
-        # Se esiste un'icona nella stessa cartella la usiamo, altrimenti
-        # Pcbnew mostra un'icona generica: nessun problema, non è bloccante.
+        # If an icon exists in the same folder we use it, otherwise Pcbnew
+        # shows a generic icon: no problem, it is not blocking.
         icon_path = os.path.join(os.path.dirname(__file__), "icon.png")
         if os.path.exists(icon_path):
             self.icon_file_name = icon_path
-        # Variante per il tema scuro di KiCad (se presente)
+        # Variant for KiCad's dark theme (if present)
         dark_path = os.path.join(os.path.dirname(__file__), "icon_dark.png")
         if os.path.exists(dark_path):
             self.dark_icon_file_name = dark_path
 
     def Run(self):
         """
-        Richiamato da Pcbnew al click sulla voce di menu. Prende la board
-        aperta e apre il dialog principale del plugin, passandogliela.
+        Called by Pcbnew when the menu entry is clicked. Takes the open board and
+        opens the main plugin dialog, passing the board to it.
         """
         board = pcbnew.GetBoard()
         if board is None:
@@ -66,9 +66,9 @@ class SIToolkitPlugin(pcbnew.ActionPlugin):
 
         global _open_dialog
 
-        # Se il dialog è già aperto lo riportiamo in primo piano invece di
-        # crearne un secondo. Se l'oggetto C++ è stato distrutto, wx
-        # solleva RuntimeError e si ricade nella creazione di uno nuovo.
+        # If the dialog is already open we bring it to the front instead of
+        # creating a second one. If the C++ object has been destroyed, wx
+        # raises RuntimeError and we fall back to creating a new one.
         if _open_dialog is not None:
             try:
                 _open_dialog.Raise()
@@ -76,15 +76,14 @@ class SIToolkitPlugin(pcbnew.ActionPlugin):
             except RuntimeError:
                 _open_dialog = None
 
-        # Il dialog è NON modale: così si può continuare a usare Pcbnew
-        # (zoom, selezione, guardare i marker) mentre è aperto. Come
-        # parent usiamo la finestra di Pcbnew, in modo che il dialog
-        # resti sempre sopra di essa. Va tenuto un riferimento globale,
-        # altrimenti Python lo distrugge appena Run() ritorna.
+        # The dialog is NON-modal: Pcbnew can still be used (zoom, selection,
+        # looking at the markers) while it is open. Pcbnew's window is used as
+        # parent, so the dialog always stays above it. A global reference must
+        # be kept, otherwise Python destroys it as soon as Run() returns.
         parent = wx.FindWindowByName("PcbFrame")
         _open_dialog = SIToolkitDialog(parent, board)
         _open_dialog.Show()
 
 
-# Riferimento al dialog aperto (vedi Run)
+# Reference to the open dialog (see Run)
 _open_dialog = None

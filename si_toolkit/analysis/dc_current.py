@@ -1,22 +1,24 @@
 """
-Modulo "Distribuzione corrente DC".
+"DC current distribution" module.
 
-Costruisce una rete di resistenze dal rame di UNA net (tracce, via, pad),
-inietta una corrente fra due pad scelti dall'utente e calcola come si
-ripartisce nei rami in parallelo: corrente, caduta di tensione, potenza
-dissipata e densita' di corrente per ogni traccia e via.
+Builds a resistor network from the copper of ONE net (tracks, vias, pads),
+injects current at an input pad, draws it at one or more output pads and
+computes how it splits among the parallel branches: current, voltage drop,
+dissipated power, current density and IPC-2221 limit for every track and
+via.
 
-Modello (volutamente semplice):
-- traccia: R = rho * L / (larghezza * spessore rame);
-- via: canna cilindrica placcata, R = rho * L / area_anello, dove la
-  lunghezza e' lo spessore della board attraversato;
-- pad: nodo a resistenza nulla che raccoglie tutte le tracce/via che lo
-  toccano (entro il suo raggio);
-- le ZONE di rame (pour) NON sono modellate: se la net ha un pour il
-  risultato e' pessimistico, perche' ignora il percorso in parallelo
-  attraverso il rame versato.
+Model (deliberately simple):
+- track: R = rho * L / (width * copper thickness), thickness from the
+  board stackup;
+- via: plated cylindrical barrel, R = rho * L / ring_area, where the
+  length is the board thickness crossed;
+- pad: zero-resistance node collecting all the tracks/vias touching it
+  (within its radius);
+- copper ZONES (pours): optionally treated as zero-resistance nodes
+  (optimistic result); otherwise ignored (pessimistic result). Teardrops
+  are always excluded.
 
-La parte di calcolo (Kirchhoff) e' in dc_solver.py, indipendente da KiCad.
+The calculation part (Kirchhoff) is in dc_solver.py, independent of KiCad.
 """
 from dataclasses import dataclass
 
@@ -26,29 +28,29 @@ from . import dc_solver
 from .return_path import _copper_layer_stack
 from ..common.i18n import _
 
-# Resistivita' del rame a 20 °C (ohm * metro)
+# Copper resistivity at 20 °C (ohm * meter)
 RHO_COPPER = 1.72e-8
 
 
 @dataclass
 class DcElement:
-    """Risultato per una traccia o una via."""
+    """Result for one track or via."""
 
-    kind: str  # "Traccia" oppure "Via"
-    item: object  # oggetto pcbnew (per selezionarlo)
+    kind: str  # "Traccia" (track) or "Via"
+    item: object  # pcbnew object (to select it)
     layer_name: str
     current_a: float
     resistance_ohm: float
     drop_v: float
     power_w: float
     density_a_mm2: float
-    length_mm: float = 0.0  # solo tracce
-    width_mm: float = 0.0  # solo tracce
-    potential_v: float = 0.0  # tensione sul lato dell'elemento verso l'ingresso
-    limit_a: float = 0.0  # corrente massima ammessa (IPC-2221) per il DT scelto
-    ratio: float = 0.0  # corrente / limite (1.0 = al limite)
-    v_start: float = 0.0  # tensione all'estremo GetStart() della traccia
-    v_end: float = 0.0  # tensione all'estremo GetEnd() della traccia
+    length_mm: float = 0.0  # tracks only
+    width_mm: float = 0.0  # tracks only
+    potential_v: float = 0.0  # voltage on the side of the element facing the input
+    limit_a: float = 0.0  # maximum allowed current (IPC-2221) for the chosen DT
+    ratio: float = 0.0  # current / limit (1.0 = at the limit)
+    v_start: float = 0.0  # voltage at the GetStart() end of the track
+    v_end: float = 0.0  # voltage at the GetEnd() end of the track
 
 
 @dataclass
@@ -57,15 +59,15 @@ class DcResult:
     total_resistance_ohm: float
     total_drop_v: float
     total_power_w: float
-    has_zones: bool  # la net ha pour di rame
-    copper_note: str = ""  # da dove arriva lo spessore del rame usato
-    zones_modeled: bool = False  # zone usate come collegamenti a R = 0
-    # Per ogni uscita: (etichetta pad, corrente A, caduta V dall'ingresso)
+    has_zones: bool  # the net has copper pours
+    copper_note: str = ""  # where the copper thickness used comes from
+    zones_modeled: bool = False  # zones used as R = 0 connections
+    # For each output: (pad label, current A, drop V from the input)
     load_drops: list = None
 
 
 def list_nets(board):
-    """Nomi delle net che hanno almeno un pad o una traccia (ordinati)."""
+    """Names of the nets having at least one pad or track (sorted)."""
     names = set()
     for pad in board.GetPads():
         if pad.GetNetname():
@@ -77,7 +79,7 @@ def list_nets(board):
 
 
 def pad_label(pad):
-    """Etichetta leggibile del pad, es. 'U1.3'."""
+    """Readable pad label, e.g. 'U1.3'."""
     try:
         ref = pad.GetParentFootprint().GetReference()
     except AttributeError:
@@ -90,35 +92,35 @@ def pad_label(pad):
 
 
 def list_pads(board, net_name):
-    """Pad della net, come lista di (etichetta, oggetto pad)."""
+    """Pads of the net, as a list of (label, pad object)."""
     pads = [(pad_label(p), p) for p in board.GetPads() if p.GetNetname() == net_name]
     pads.sort(key=lambda t: t[0])
     return pads
 
 
 def _radius_nm(item):
-    """Raggio approssimato (nm) di un pad o via dal suo bounding box."""
+    """Approximate radius (nm) of a pad or via from its bounding box."""
     box = item.GetBoundingBox()
     return max(box.GetWidth(), box.GetHeight()) / 2.0
 
 
 def copper_thickness_by_layer(board, fallback_um=35.0):
     """
-    Spessore del rame (metri) di ogni layer di rame, letto dallo stackup
-    della board (Setup board > Stackup fisico). Per i layer senza valore
-    nello stackup si usa 'fallback_um'.
+    Copper thickness (meters) of every copper layer, read from the board
+    stackup (Board Setup > Physical Stackup). For layers without a value in
+    the stackup 'fallback_um' is used.
 
-    Ritorna (dizionario layer -> metri, testo che spiega la provenienza).
+    Returns (dictionary layer -> meters, text explaining the source).
     """
     result = {}
     try:
         from .impedance import _read_real_stackup
 
-        # Stessa lettura (robusta) usata dal calcolatore di impedenza
+        # Same (robust) reading used by the impedance calculator
         stackup, _errors = _read_real_stackup(board)
         result = {layer: info["t"] for layer, info in stackup.items()}
     except Exception:
-        result = {}  # stackup non leggibile: si usa il valore di ripiego
+        result = {}  # stackup not readable: the fallback value is used
 
     missing = [l for l in _copper_layer_stack(board) if l not in result]
     for layer in missing:
@@ -132,11 +134,11 @@ def copper_thickness_by_layer(board, fallback_um=35.0):
 
 def ipc2221_limit_a(width_mm, copper_um, delta_t, external):
     """
-    Corrente massima (A) di un conduttore secondo IPC-2221:
+    Maximum current (A) of a conductor according to IPC-2221:
         I = k * DT^0.44 * A^0.725
-    con A = sezione in mil^2, DT = aumento di temperatura ammesso (°C),
-    k = 0.048 per layer esterni, 0.024 per layer interni.
-    E' una formula empirica per tracce isolate: va presa come stima.
+    with A = cross-section in mil^2, DT = allowed temperature rise (°C),
+    k = 0.048 for outer layers, 0.024 for inner layers.
+    It is an empirical formula for isolated tracks: take it as an estimate.
     """
     area_mil2 = (width_mm / 0.0254) * (copper_um / 25.4)
     k = 0.048 if external else 0.024
@@ -144,14 +146,14 @@ def ipc2221_limit_a(width_mm, copper_um, delta_t, external):
 
 
 def is_pad(item):
-    """Vero se l'oggetto e' un pad (e non una traccia o una via)."""
+    """True if the object is a pad (and not a track or a via)."""
     return item.Type() == pcbnew.PCB_PAD_T
 
 
 def selected_items(board):
     """
-    Tracce, via e pad selezionati in Pcbnew in questo momento, nell'ordine
-    pad prima (se ce ne sono), poi tracce e via.
+    Tracks, vias and pads currently selected in Pcbnew, with pads first (if
+    any), then tracks and vias.
     """
     pads = [p for p in board.GetPads() if p.IsSelected()]
     tracks = [t for t in board.GetTracks() if t.IsSelected()]
@@ -159,14 +161,14 @@ def selected_items(board):
 
 
 def net_items(board, net_name):
-    """Tutti gli oggetti (tracce, via, pad) della net: per evidenziarla."""
+    """All the objects (tracks, vias, pads) of the net: to highlight it."""
     items = [t for t in board.GetTracks() if t.GetNetname() == net_name]
     items += [p for p in board.GetPads() if p.GetNetname() == net_name]
     return items
 
 
 class _UnionFind:
-    """Unisce i nodi che sono lo stesso punto elettrico (resistenza nulla)."""
+    """Merges the nodes that are the same electrical point (zero resistance)."""
 
     def __init__(self):
         self.parent = {}
@@ -198,23 +200,23 @@ def analyze_net(
     loads=None,
 ):
     """
-    Calcola la distribuzione di corrente sulla net.
+    Computes the current distribution on the net.
 
-    source_pad / sink_pad: oggetti pad (da list_pads) dove la corrente
-    entra ed esce. copper_um: spessore del rame in micron; se None (default)
-    viene letto layer per layer dallo stackup della board.
-    via_plating_um: spessore di placcatura della canna delle via.
-    include_zones: se True le zone di rame della net sono trattate come
-    collegamenti a resistenza nulla (ottimistico: ignora la resistenza
-    del piano); se False sono ignorate (pessimistico).
-    delta_t: aumento di temperatura (°C) ammesso, per il limite di corrente
-    IPC-2221 di ogni traccia e via.
-    loads: lista di (pad, corrente_A) per piu' uscite; se indicata,
-    sink_pad e current_a sono ignorati e la corrente in ingresso e' la
-    somma delle correnti dei carichi.
-    report_path: se indicato, quando il collegamento non viene trovato scrive
-    in quel file di testo il dettaglio dei gruppi di rame (diagnostica).
-    Solleva ValueError se la rete non collega i due pad.
+    source_pad / sink_pad: pad objects (from list_pads) where the current
+    enters and leaves. copper_um: copper thickness in microns; if None
+    (default) it is read layer by layer from the board stackup.
+    via_plating_um: plating thickness of the via barrel.
+    include_zones: if True the copper zones of the net are treated as
+    zero-resistance connections (optimistic: ignores the plane resistance);
+    if False they are ignored (pessimistic).
+    delta_t: allowed temperature rise (°C), for the IPC-2221 current limit of
+    every track and via.
+    loads: list of (pad, current_A) for several outputs; if given, sink_pad
+    and current_a are ignored and the input current is the sum of the load
+    currents.
+    report_path: if given, when the connection is not found the details of
+    the copper groups are written to that text file (diagnostics).
+    Raises ValueError if the network does not connect the pads.
     """
     if copper_um is None:
         copper_by_layer, copper_note = copper_thickness_by_layer(board)
@@ -228,10 +230,10 @@ def analyze_net(
     uf = _UnionFind()
 
     def end_key(point, layer):
-        # Estremita' di traccia: coordinate arrotondate a 1 µm + layer
+        # Track ends: coordinates rounded to 1 µm + layer
         return ("e", round(point.x / 1000), round(point.y / 1000), layer)
 
-    # ---- Raccolta elementi della net ----
+    # ---- Collect the elements of the net ----
     tracks, vias = [], []
     for t in board.GetTracks():
         if t.GetNetname() != net_name:
@@ -242,21 +244,21 @@ def analyze_net(
             tracks.append(t)
     pads = [p for p in board.GetPads() if p.GetNetname() == net_name]
 
-    # ---- Nodi dei pad e delle via, uniti alle estremita' che li toccano ----
-    # Raccolta di tutte le estremita' di traccia (nodo, posizione, layer)
+    # ---- Pad and via nodes, merged with the track ends touching them ----
+    # Collect all the track ends (node, position, layer)
     endpoints = []
-    endpoint_widths = []  # larghezza della traccia di ogni estremita' (nm)
+    endpoint_widths = []  # track width at each end (nm)
     for t in tracks:
         layer = t.GetLayer()
         for pt in (t.GetStart(), t.GetEnd()):
             endpoints.append((end_key(pt, layer), pt, layer))
             endpoint_widths.append(t.GetWidth())
 
-    # Due estremita' sullo stesso layer sono collegate se il rame delle due
-    # tracce si sovrappone, cioe' se distano meno della meta' della
-    # larghezza maggiore (le estremita' sono tonde). Succede spesso che due
-    # tracce si sovrappongano di pochi centesimi di mm senza coincidere:
-    # per KiCad sono collegate. Soglia minima 1 um per l'arrotondamento.
+    # Two ends on the same layer are connected if the copper of the two tracks
+    # overlaps, i.e. if they are closer than half the larger width (the ends
+    # are round). Two tracks often overlap by a few hundredths of a mm without
+    # coinciding: for KiCad they are connected. Minimum threshold 1 um for
+    # rounding.
     for i, (k1, p1, l1) in enumerate(endpoints):
         for j in range(i + 1, len(endpoints)):
             k2, p2, l2 = endpoints[j]
@@ -270,8 +272,8 @@ def analyze_net(
     pad_nodes = {}
     for k, pad in enumerate(pads):
         node = ("p", k)
-        # Chiave = etichetta (es. "U1.3"): gli oggetti SWIG vengono ricreati
-        # a ogni chiamata, quindi id(pad) non e' stabile fra due chiamate
+        # Key = label (e.g. "U1.3"): SWIG objects are recreated at every call,
+        # so id(pad) is not stable between two calls
         pad_nodes[pad_label(pad)] = node
         uf.find(node)
         pos, rad = pad.GetPosition(), _radius_nm(pad)
@@ -279,7 +281,7 @@ def analyze_net(
             if pad.IsOnLayer(layer) and _dist2(pos, pt) <= rad * rad:
                 uf.union(node, key)
 
-    via_chains = []  # per ogni via: lista di (layer, nodo)
+    via_chains = []  # for each via: list of (layer, node)
     for k, via in enumerate(vias):
         pos, rad = via.GetPosition(), _radius_nm(via)
         top, bottom = via.TopLayer(), via.BottomLayer()
@@ -293,32 +295,32 @@ def analyze_net(
             node = ("v", k, layer)
             uf.find(node)
             chain.append((layer, node))
-            # Estremita' di traccia sul layer, dentro il raggio della via
+            # Track ends on the layer, within the via radius
             for key, pt, ep_layer in endpoints:
                 if ep_layer == layer and _dist2(pos, pt) <= rad * rad:
                     uf.union(node, key)
-            # Pad che toccano la via (via sotto un pad, "via in pad")
+            # Pads touching the via (via under a pad, "via in pad")
             for pad in pads:
                 if pad.IsOnLayer(layer) and _dist2(pos, pad.GetPosition()) <= _radius_nm(pad) ** 2:
                     uf.union(node, pad_nodes[pad_label(pad)])
         via_chains.append(chain)
 
 
-    # ---- Zone di rame (pour) come nodi a resistenza nulla ----
-    # Ogni zona della net e' un nodo unico: tutto cio' che cade nel suo
-    # rame versato (pad, via, estremita' di traccia) viene unito a quel
-    # nodo. E' un'approssimazione ottimistica: la resistenza del piano e'
-    # ignorata, e due isole separate della stessa zona risultano collegate.
+    # ---- Copper zones (pours) as zero-resistance nodes ----
+    # Each zone of the net is a single node: everything falling in its poured
+    # copper (pads, vias, track ends) is merged into that node. It is an
+    # optimistic approximation: the plane resistance is ignored, and two
+    # separate islands of the same zone end up connected.
     zones = []
     if include_zones:
-        # Le teardrop sono zone anche loro: se fossero a R = 0
-        # cortocircuiterebbero pad e tracce vicine, quindi si escludono
+        # Teardrops are zones too: at R = 0 they would short nearby pads and
+        # tracks, so they are excluded
         zones = [z for z in board.Zones()
                  if z.GetNetname() == net_name and z.IsFilled() and not _is_teardrop(z)]
     for zi, zone in enumerate(zones):
         znode = ("z", zi)
         uf.find(znode)
-        # Candidati: (nodo, posizione, raggio nm, lista layer)
+        # Candidates: (node, position, radius nm, list of layers)
         candidates = []
         for key, pt, layer in endpoints:
             candidates.append((key, pt, 0, [layer]))
@@ -334,8 +336,8 @@ def analyze_net(
                     uf.union(znode, node)
                     break
 
-    # ---- Rami della rete ----
-    edges = []  # (nodo_a, nodo_b, ohm, (tipo, indice))
+    # ---- Network branches ----
+    edges = []  # (node_a, node_b, ohm, (type, index))
     for k, t in enumerate(tracks):
         layer = t.GetLayer()
         length_m = pcbnew.ToMM(t.GetLength()) * 1e-3
@@ -347,21 +349,21 @@ def analyze_net(
         start_node = uf.find(end_key(t.GetStart(), layer))
         end_node = uf.find(end_key(t.GetEnd(), layer))
 
-        # Punti di contatto lungo la traccia (collegamenti "a T"): estremita'
-        # di altre tracce, pad e via che toccano il corpo della traccia senza
-        # coincidere con le sue estremita'. Per KiCad sono collegati; la
-        # traccia va spezzata in quei punti. Solo per tracce rettilinee
-        # (gli archi restano un unico ramo).
-        splits = []  # (parametro u da 0 a 1 lungo la traccia, nodo)
+        # Contact points along the track ("T" connections): ends of other
+        # tracks, pads and vias touching the body of the track without
+        # coinciding with its ends. For KiCad they are connected; the track
+        # must be split at those points. Straight tracks only (arcs stay a
+        # single branch).
+        splits = []  # (parameter u from 0 to 1 along the track, node)
         if t.Type() == pcbnew.PCB_TRACE_T:
             S, E = t.GetStart(), t.GetEnd()
             dx, dy = E.x - S.x, E.y - S.y
             len2 = dx * dx + dy * dy
-            half_w = t.GetWidth() / 2.0 + 1000  # + 1 um di tolleranza
+            half_w = t.GetWidth() / 2.0 + 1000  # + 1 um tolerance
 
             def try_split(pos, extra_nm, node):
-                # Proiezione del punto sul segmento: se cade dentro il
-                # segmento e a distanza utile, e' un contatto
+                # Projection of the point on the segment: if it falls inside
+                # the segment and close enough, it is a contact
                 if len2 == 0:
                     return
                 u = ((pos.x - S.x) * dx + (pos.y - S.y) * dy) / len2
@@ -382,8 +384,8 @@ def analyze_net(
                     if v_layer == layer:
                         try_split(via.GetPosition(), _radius_nm(via), v_node)
 
-        # Catena di sotto-rami: la resistenza si divide in proporzione alla
-        # lunghezza di ogni pezzo
+        # Chain of sub-branches: the resistance is split in proportion to the
+        # length of each piece
         points = [(0.0, start_node)]
         points += sorted((u, uf.find(n)) for u, n in splits)
         points.append((1.0, end_node))
@@ -396,21 +398,21 @@ def analyze_net(
         if len(chain) < 2:
             continue
         drill_m = pcbnew.ToMM(via.GetDrillValue()) * 1e-3
-        # Anello di rame della canna: pi * t * (d + t)
+        # Copper ring of the barrel: pi * t * (d + t)
         area_m2 = 3.141592653589793 * plating_m * (drill_m + plating_m)
-        # Lunghezza: porzione di spessore board attraversata dalla via
+        # Length: portion of the board thickness crossed by the via
         frac = (len(chain) - 1) / max(1, len(stack) - 1)
         r_total = RHO_COPPER * board_thickness_m * frac / area_m2
         r_seg = r_total / (len(chain) - 1)
         for (_l1, n1), (_l2, n2) in zip(chain, chain[1:]):
             edges.append((uf.find(n1), uf.find(n2), r_seg, ("v", k)))
 
-    # ---- Soluzione ----
+    # ---- Solution ----
     if loads is None:
         loads = [(sink_pad, current_a)]
-    # Il primo carico fa da "uscita" per i messaggi diagnostici
+    # The first load acts as "output" for the diagnostic messages
     sink_pad = loads[0][0]
-    current_a = sum(i for _p, i in loads)  # corrente totale in ingresso
+    current_a = sum(i for _p, i in loads)  # total input current
     try:
         src = uf.find(pad_nodes[pad_label(source_pad)])
         load_nodes = [(uf.find(pad_nodes[pad_label(p)]), i) for p, i in loads]
@@ -420,8 +422,8 @@ def analyze_net(
     try:
         potentials, currents = dc_solver.solve_dc(edges, src, None, 0.0, loads=load_nodes)
     except ValueError as exc:
-        # Collegamento non trovato: scrive il rapporto dettagliato dei
-        # gruppi di rame (se richiesto) e aggiunge informazioni al messaggio
+        # Connection not found: writes the detailed report of the copper groups
+        # (if requested) and adds information to the message
         if report_path:
             try:
                 _write_cluster_report(
@@ -436,8 +438,8 @@ def analyze_net(
             )
         )
 
-    # ---- Risultati per elemento (le via a catena sommano i segmenti) ----
-    # (tipo, k) -> [corrente max, caduta, potenza, resistenza, tensione a monte]
+    # ---- Results per element (chained vias add up their segments) ----
+    # (type, k) -> [max current, drop, power, resistance, upstream voltage]
     acc = {}
     for (a, b, r, tag), i in zip(edges, currents):
         e = acc.setdefault(tag, [0.0, 0.0, 0.0, 0.0, 0.0])
@@ -445,14 +447,14 @@ def analyze_net(
         e[1] += abs(i) * r
         e[2] += i * i * r
         e[3] += r
-        # Tensione del capo piu' vicino all'ingresso (la sorgente e' la
-        # piu' alta, il ritorno e' a 0 V): serve a ordinare il percorso
+        # Voltage of the end closest to the input (the source is the highest,
+        # the return is at 0 V): used to order the path
         e[4] = max(e[4], potentials.get(a, 0.0), potentials.get(b, 0.0))
 
     elements = []
     for (kind, k), (i, drop, power, r, v_hi) in acc.items():
         if i < 1e-12:
-            continue  # ramo senza corrente (fuori dal percorso)
+            continue  # branch without current (outside the path)
         if kind == "t":
             t = tracks[k]
             copper_mm = copper_by_layer.get(t.GetLayer(), 35e-6) * 1e3
@@ -465,8 +467,8 @@ def analyze_net(
                 DcElement("Traccia", t, t.GetLayerName(), i, r, drop, power,
                           i / area_mm2, pcbnew.ToMM(t.GetLength()),
                           pcbnew.ToMM(t.GetWidth()), v_hi, limit, i / limit,
-                          # Tensioni ai due capi: servono alla mappa per
-                          # sfumare il colore lungo la traccia
+                          # Voltages at the two ends: used by the map to shade
+                          # the color along the track
                           potentials.get(uf.find(end_key(t.GetStart(), t.GetLayer())), v_hi),
                           potentials.get(uf.find(end_key(t.GetEnd(), t.GetLayer())), v_hi))
             )
@@ -474,9 +476,9 @@ def analyze_net(
             via = vias[k]
             d_mm = pcbnew.ToMM(via.GetDrillValue())
             area_mm2 = 3.141592653589793 * via_plating_um * 1e-3 * (d_mm + via_plating_um * 1e-3)
-            # Via: la canna e' un tubo di rame; si usa la stessa formula con
-            # la sezione dell'anello (equivalente a una "larghezza" fittizia
-            # sezione / spessore di placcatura), come layer esterno
+            # Via: the barrel is a copper tube; the same formula is used with
+            # the ring cross-section (equivalent to a fictitious "width" =
+            # cross-section / plating thickness), as an outer layer
             equiv_width_mm = area_mm2 / (via_plating_um * 1e-3)
             limit = ipc2221_limit_a(equiv_width_mm, via_plating_um, delta_t, True)
             elements.append(
@@ -484,10 +486,10 @@ def analyze_net(
                           i, r, drop, power, i / area_mm2, 0.0, 0.0, v_hi,
                           limit, i / limit)
             )
-    # Ordine del percorso: dall'ingresso (tensione piu' alta) all'uscita
+    # Path order: from the input (highest voltage) to the output
     elements.sort(key=lambda e: e.potential_v, reverse=True)
 
-    # Caduta totale = verso il carico piu' sfavorito (quello a 0 V)
+    # Total drop = towards the worst-case load (the one at 0 V)
     total_drop = potentials[src]
     load_drops = [(pad_label(p), i, potentials[src] - potentials.get(n, 0.0))
                   for (p, i), (n, _i) in zip(loads, load_nodes)]
@@ -507,10 +509,10 @@ def analyze_net(
 def _write_cluster_report(path, board, edges, uf, tracks, vias, pads,
                           pad_nodes, via_chains, endpoints, src, snk):
     """
-    Scrive su file i gruppi di rame collegati fra loro (componenti), con
-    pad, numero di tracce, ingombro e le estremita' di traccia "libere"
-    (che non toccano altro), indicando i gruppi di sorgente e ritorno.
-    Il buco nel collegamento si trova fra le estremita' libere dei due gruppi.
+    Writes to a file the groups of copper connected together (components),
+    with pads, number of tracks, extent and the "free" track ends (touching
+    nothing else), marking the source and return groups.
+    The hole in the connection is between the free ends of the two groups.
     """
     mm = pcbnew.ToMM
     adj = {}
@@ -518,19 +520,19 @@ def _write_cluster_report(path, board, edges, uf, tracks, vias, pads,
         adj.setdefault(a, set()).add(b)
         adj.setdefault(b, set()).add(a)
 
-    # Nodi radice di pad e via, per riconoscere le estremita' "attaccate"
+    # Root nodes of pads and vias, to recognize the "attached" ends
     pad_root = {uf.find(n): label for label, n in pad_nodes.items()}
     via_roots = set()
     for chain in via_chains:
         for _l, n in chain:
             via_roots.add(uf.find(n))
 
-    # Coordinate delle estremita' per nodo radice
+    # Coordinates of the ends per root node
     coords = {}
     for key, pt, layer in endpoints:
         coords.setdefault(uf.find(key), []).append((pt, layer))
 
-    # Componenti connesse (visita del grafo)
+    # Connected components (graph traversal)
     seen, comps = set(), []
     for start in list(adj) + list(pad_root):
         if start in seen:
@@ -567,8 +569,8 @@ def _write_cluster_report(path, board, edges, uf, tracks, vias, pads,
             bbox = (f"x {min(xs):.2f}..{max(xs):.2f}, y {min(ys):.2f}..{max(ys):.2f}"
                     if xs else "n/d")
             f.write(_("Gruppo {0}{1}: {2} tracce, {3} via, pad: {4}; ingombro {5}\n").format(ci, tag, len(comp_tracks), len(comp_vias), ', '.join(comp_pads) or '-', bbox))
-            # Estremita' libere: nodo con un solo vicino, non pad ne' via
-            # (solo per i gruppi di ingresso/uscita e per i piccoli)
+            # Free ends: node with a single neighbour, neither pad nor via
+            # (only for the input/output groups and the small ones)
             if tag or len(comp_tracks) <= 6:
                 for n in comp:
                     if len(adj.get(n, ())) <= 1 and n not in pad_root and n not in via_roots:
@@ -582,11 +584,11 @@ def _write_cluster_report(path, board, edges, uf, tracks, vias, pads,
 
 def _explain_disconnection(edges, uf, pads, pad_nodes, endpoints, source_pad, sink_pad, src):
     """
-    Testo diagnostico per il caso "pad non collegati": per sorgente e
-    ritorno, quanti rami toccano il loro nodo e quanto dista l'estremita'
-    di traccia piu' vicina; poi quali pad si raggiungono dalla sorgente.
+    Diagnostic text for the "pads not connected" case: for source and return,
+    how many branches touch their node and how far the nearest track end is;
+    then which pads can be reached from the source.
     """
-    # Insiemi di nodi raggiungibili dalla sorgente (visita del grafo)
+    # Sets of nodes reachable from the source (graph traversal)
     adj = {}
     for a, b, _r, _tag in edges:
         adj.setdefault(a, set()).add(b)
@@ -616,14 +618,14 @@ def _explain_disconnection(edges, uf, pads, pad_nodes, endpoints, source_pad, si
 
 
 def _is_teardrop(zone):
-    """True se la zona e' una teardrop generata da KiCad."""
-    fn = getattr(zone, "IsTeardropArea", None)  # API KiCad 8+
+    """True if the zone is a teardrop generated by KiCad."""
+    fn = getattr(zone, "IsTeardropArea", None)  # KiCad 8+ API
     if fn is not None:
         try:
             return bool(fn())
         except Exception:
             pass
-    # Ripiego: KiCad chiama le teardrop "$teardrop_..."
+    # Fallback: KiCad names teardrops "$teardrop_..."
     try:
         return "teardrop" in zone.GetZoneName().lower()
     except Exception:
@@ -632,10 +634,10 @@ def _is_teardrop(zone):
 
 def _covered_by_zone(zone, layer, pos, rad_nm):
     """
-    Vero se il punto (o l'area di un pad/via) tocca il rame versato della
-    zona. Si prova il centro e un anello di 8 punti appena fuori dal
-    raggio: un pad con thermal relief ha il centro scoperto ma gli spoke
-    toccano l'anello.
+    True if the point (or the area of a pad/via) touches the poured copper of
+    the zone. The centre and a ring of 8 points just outside the radius are
+    tested: a pad with thermal relief has an uncovered centre but the spokes
+    touch the ring.
     """
     import math
 
@@ -651,6 +653,6 @@ def _covered_by_zone(zone, layer, pos, rad_nm):
 
 
 def _dist2(p, q):
-    """Distanza al quadrato fra due punti (nm^2)."""
+    """Squared distance between two points (nm^2)."""
     dx, dy = p.x - q.x, p.y - q.y
     return dx * dx + dy * dy

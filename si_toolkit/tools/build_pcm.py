@@ -1,15 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-Crea il pacchetto per il "Gestore di plugin e contenuti" (PCM) di KiCad.
+Builds the package for KiCad's "Plugin and Content Manager" (PCM).
 
-Struttura richiesta dal PCM:
-    metadata.json          descrizione del pacchetto (nome, versione, ...)
-    plugins/               i file del plugin, direttamente qui (con __init__.py)
-    resources/icon.png     icona 64x64 mostrata nell'elenco del PCM
+Structure required by the PCM:
+    metadata.json          package description (name, version, ...)
+    plugins/               the plugin files, directly here (with __init__.py)
+    resources/icon.png     64x64 icon shown in the PCM list
 
-Uso:  python build_pcm.py [cartella_di_uscita]
-Il file creato si installa da KiCad: Gestore di plugin e contenuti ->
-"Installa da file...".
+Usage:  python build_pcm.py [output_folder]
+The resulting file is installed from KiCad: Plugin and Content Manager ->
+"Install from File...".
 """
 import json
 import os
@@ -48,8 +48,8 @@ METADATA = {
     ],
 }
 
-# Cosa NON va nel pacchetto: cache Python, impostazioni personali, strumenti
-# di sviluppo (questa cartella), file di prova e diagnostica
+# What does NOT go into the package: Python caches, personal settings,
+# development tools (this folder), test and diagnostic files
 EXCLUDE_DIRS = {"__pycache__", "tools"}
 EXCLUDE_FILES = {"settings.json", "dc_diagnostics.txt", "icon_64.png"}
 
@@ -58,9 +58,9 @@ def build(out_dir):
     out = os.path.join(out_dir, f"si_toolkit_pcm_{VERSION}.zip")
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("metadata.json", json.dumps(METADATA, indent=4))
-        # Icona 64x64 per l'elenco del PCM
+        # 64x64 icon for the PCM list
         z.write(os.path.join(PLUGIN_DIR, "icon_64.png"), "resources/icon.png")
-        # File del plugin direttamente sotto plugins/
+        # Plugin files directly under plugins/
         for root, dirs, files in os.walk(PLUGIN_DIR):
             dirs[:] = [d for d in dirs if d not in EXCLUDE_DIRS]
             for name in files:

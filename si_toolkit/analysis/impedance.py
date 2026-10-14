@@ -1,18 +1,22 @@
 """
-Modulo "Calcolatore di impedenza".
+"Impedance calculator" module.
 
-Calcola l'impedenza caratteristica Z0 delle tracce con formule chiuse:
-- microstrip (traccia su layer esterno, piano di riferimento solo da un
-  lato): formule di Hammerstad-Jensen con correzione per lo spessore;
-- stripline (traccia su layer interno fra due piani): formula IPC-2141.
+Computes the characteristic impedance Z0 of the tracks. The values shown in
+the plugin come from the 2D field solver (field2d.py), which handles
+coplanar ground, solder mask and copper thickness. The closed-form formulas
+in this file are used as a fast starting point when searching for the
+width/gap that gives the target:
+- microstrip (track on an outer layer, reference plane on one side only):
+  Hammerstad-Jensen formulas with thickness correction;
+- coplanar microstrip with ground below (CPWG): elliptic integrals;
+- stripline (track on an inner layer between two planes): IPC-2141.
 
-Sono formule di progetto, accurate al 5-10% circa: vanno bene per capire
-se una traccia e' lontana dai 50 ohm voluti, NON sostituiscono un field
-solver (per quello servira' il modulo openEMS). Non considerano il solder
-mask, ne' la rugosita' del rame, ne' la perdita nel dielettrico.
+Neither the formulas nor the field solver account for copper roughness or
+dielectric losses.
 
-Le funzioni di calcolo non dipendono da pcbnew (si provano fuori da KiCad);
-solo read_stackup() legge la board.
+The calculation functions do not depend on pcbnew (they can be tested
+outside KiCad); only the stackup and copper reading functions access the
+board.
 """
 import math
 
@@ -31,11 +35,11 @@ from ..common.i18n import _
 
 def microstrip_z0(w, h, er, t):
     """
-    Z0 (ohm) di una microstrip. w = larghezza, h = distanza dal piano,
-    er = costante dielettrica, t = spessore rame. Unita' qualsiasi, purche'
-    uguali fra loro (es. metri).
+    Z0 (ohm) of a microstrip. w = width, h = distance from the plane,
+    er = dielectric constant, t = copper thickness. Any units, as long as they
+    are the same (e.g. meters).
     """
-    # Larghezza efficace: lo spessore del rame "allarga" elettricamente la traccia
+    # Effective width: the copper thickness electrically "widens" the track
     if t > 0:
         u0 = w / h
         if u0 <= 1.0 / (2 * math.pi):
@@ -44,7 +48,7 @@ def microstrip_z0(w, h, er, t):
             dw = (t / math.pi) * (1 + math.log(2 * h / t))
         w = w + dw
     u = w / h
-    # Costante dielettrica efficace (parte nell'aria e parte nel dielettrico)
+    # Effective dielectric constant (part in air and part in the dielectric)
     eeff = (er + 1) / 2 + (er - 1) / 2 / math.sqrt(1 + 12 / u)
     if u < 1:
         eeff += (er - 1) / 2 * 0.04 * (1 - u) ** 2
@@ -55,14 +59,14 @@ def microstrip_z0(w, h, er, t):
 
 def stripline_z0(w, b, er, t):
     """
-    Z0 (ohm) di una stripline centrata fra due piani (IPC-2141):
-    b = distanza totale fra i due piani, comprensiva dello spessore del rame.
+    Z0 (ohm) of a stripline centred between two planes (IPC-2141):
+    b = total distance between the two planes, copper thickness included.
     """
     return 60 / math.sqrt(er) * math.log(1.9 * b / (0.8 * w + t))
 
 
 def _ellip_k(k):
-    """Integrale ellittico completo K(k) con la media aritmetico-geometrica."""
+    """Complete elliptic integral K(k) with the arithmetic-geometric mean."""
     a, b = 1.0, math.sqrt(1.0 - k * k)
     for _step in range(40):
         a, b = (a + b) / 2, math.sqrt(a * b)
@@ -71,20 +75,20 @@ def _ellip_k(k):
 
 def cpwg_z0(w, gap, h, er, t=0.0):
     """
-    Z0 (ohm) di una microstrip COPLANARE con piano di massa sotto (CPWG):
-    traccia di larghezza w con massa sullo stesso layer a distanza 'gap'
-    per lato e piano di riferimento a distanza h. Formula con integrali
-    ellittici (conformal mapping).
+    Z0 (ohm) of a COPLANAR microstrip with ground plane below (CPWG): track of
+    width w with ground on the same layer at distance 'gap' per side and the
+    reference plane at distance h. Formula with elliptic integrals (conformal
+    mapping).
 
-    Spessore del rame 't' (metodo dei calcolatori Qucs/KiCad): la traccia
-    "spessa" si allarga di d e il gap si stringe di d SOLO nel termine in
-    aria (fra traccia e massa laterale), mentre la costante dielettrica
-    efficace cala leggermente. Verificato con la Calcolatrice PCB di KiCad
-    (w 0,7 / gap 0,2 / h 1,51 / Er 4,5 / t 0,035: KiCad 58,2 ohm, qui 56,7).
-    La versione precedente applicava d a tutto il calcolo e dava 49,8 ohm.
+    Copper thickness 't' (method of the Qucs/KiCad calculators): the "thick"
+    track widens by d and the gap narrows by d ONLY in the air term (between
+    track and side ground), while the effective dielectric constant drops
+    slightly. Checked against KiCad's PCB Calculator
+    (w 0.7 / gap 0.2 / h 1.51 / Er 4.5 / t 0.035: KiCad 58.2 ohm, here 56.7).
+    The previous version applied d to the whole calculation and gave 49.8 ohm.
     """
     def parts(w_, g_):
-        # q1: termine fra traccia e massa laterale; q3: termine verso il piano
+        # q1: term between track and side ground; q3: term towards the plane
         a = w_ / 2.0
         b = a + g_
         k = a / b
@@ -105,17 +109,17 @@ def cpwg_z0(w, gap, h, er, t=0.0):
 
 def width_for_z0(z_func, target, w_min, w_max):
     """
-    Larghezza che da' l'impedenza 'target', per bisezione: z_func(w) cala
-    all'aumentare di w. Ritorna None se il target e' fuori da [w_min, w_max].
+    Width giving the 'target' impedance, by bisection: z_func(w) decreases as
+    w grows. Returns None if the target is outside [w_min, w_max].
     """
-    z_hi, z_lo = z_func(w_min), z_func(w_max)  # z_hi: traccia stretta
+    z_hi, z_lo = z_func(w_min), z_func(w_max)  # z_hi: narrow track
     if not (z_lo <= target <= z_hi):
         return None
     lo, hi = w_min, w_max
     for _step in range(60):
         mid = (lo + hi) / 2
         if z_func(mid) > target:
-            lo = mid  # troppo impedente: serve piu' larga
+            lo = mid  # impedance too high: a wider track is needed
         else:
             hi = mid
     return (lo + hi) / 2
@@ -123,10 +127,10 @@ def width_for_z0(z_func, target, w_min, w_max):
 
 def _item_kind(it):
     """
-    'cu' per un layer di rame, 'diel' per un dielettrico, None per il resto
-    (solder mask, serigrafia...). Usa le costanti di pcbnew se esistono e,
-    in mancanza, il nome del tipo (GetTypeName), perche' i nomi delle
-    costanti cambiano fra versioni di KiCad.
+    'cu' for a copper layer, 'diel' for a dielectric, None for the rest
+    (solder mask, silkscreen...). Uses the pcbnew constants if they exist and,
+    failing that, the type name (GetTypeName), because the constant names
+    change between KiCad versions.
     """
     cu = getattr(pcbnew, "BS_ITEM_TYPE_COPPER", None)
     di = getattr(pcbnew, "BS_ITEM_TYPE_DIELECTRIC", None)
@@ -151,22 +155,22 @@ def _item_kind(it):
 
 
 def _items_from_api(board):
-    """Elementi dello stackup letti con l'API di pcbnew. Ritorna (items, errori)."""
+    """Stackup items read with the pcbnew API. Returns (items, errors)."""
     errors = []
     try:
         raw = list(board.GetDesignSettings().GetStackupDescriptor().GetList())
     except Exception as exc:
         return [], [_("API stackup: {0}").format(exc)]
 
-    items = []  # ("cu", layer, spessore m) / ("diel", None, spessore m, er)
+    items = []  # ("cu", layer, thickness m) / ("diel", None, thickness m, er)
     for it in raw:
         try:
             kind = _item_kind(it)
             if kind == "cu":
                 items.append(("cu", it.GetBrdLayerId(), it.GetThickness() * 1e-9))
             elif kind == "diel":
-                # Un dielettrico puo' avere piu' sotto-strati: spessori
-                # sommati, er pesata sullo spessore
+                # A dielectric can have several sub-layers: thicknesses summed,
+                # er weighted by thickness
                 th_tot, er_w = 0.0, 0.0
                 for sub in range(max(1, it.GetSublayersCount())):
                     th = it.GetThickness(sub) * 1e-9
@@ -182,7 +186,7 @@ def _items_from_api(board):
 
 
 def _parse_sexpr(text):
-    """Parser minimo di s-expression KiCad: liste annidate di stringhe."""
+    """Minimal parser of KiCad s-expressions: nested lists of strings."""
     import re
 
     tokens = re.findall(r'\(|\)|"(?:[^"\\]|\\.)*"|[^\s()]+', text)
@@ -202,10 +206,10 @@ def _parse_sexpr(text):
 
 def _items_from_file(board):
     """
-    Elementi dello stackup letti dal file .kicad_pcb salvato (sezione
-    "stackup"). Serve quando l'API Python non espone gli strati. Legge il
-    file su disco: le modifiche non ancora salvate non si vedono.
-    Ritorna (items, errori).
+    Stackup items read from the saved .kicad_pcb file ("stackup" section).
+    Needed when the Python API does not expose the layers. It reads the file
+    on disk: unsaved changes are not seen.
+    Returns (items, errors).
     """
     import os
     import re
@@ -221,7 +225,7 @@ def _items_from_file(board):
     start = text.find("(stackup")
     if start < 0:
         return [], [_("nel file .kicad_pcb non c'e' la sezione stackup (aprila in Setup scheda > Stackup fisico, premi OK e salva)")]
-    # Blocco "(stackup ...)" completo, contando le parentesi fuori dalle stringhe
+    # Whole "(stackup ...)" block, counting the parentheses outside strings
     depth, i, in_str = 0, start, False
     while i < len(text):
         ch = text[i]
@@ -259,7 +263,7 @@ def _items_from_file(board):
                 if th > 0:
                     items.append(("mask", None, th, er))
             elif ltype in ("core", "prepreg", "dielectric"):
-                # Coppie (spessore, er); le sotto-strati ripetono i campi
+                # (thickness, er) pairs; sub-layers repeat the fields
                 pairs, th, er = [], None, None
                 for c in fields:
                     if c[0] == "thickness":
@@ -282,14 +286,15 @@ def _items_from_file(board):
 
 def _read_real_stackup(board):
     """
-    Legge lo stackup fisico della board (Setup board > Stackup): prima con
-    l'API di pcbnew, e se questa non espone gli strati dal file .kicad_pcb.
+    Reads the physical stackup of the board (Board Setup > Stackup): first
+    with the pcbnew API, and if that does not expose the layers, from the
+    .kicad_pcb file.
 
-    Ritorna (dizionario, errori) dove il dizionario e': layer_di_rame -> {
-        "t": spessore rame (m),
-        "above": (spessore dielettrico (m), er) verso il layer sopra, o None,
-        "below": (spessore (m), er) verso il layer sotto, o None }
-    ed e' vuoto se lo stackup non e' leggibile.
+    Returns (dictionary, errors) where the dictionary is: copper_layer -> {
+        "t": copper thickness (m),
+        "above": (dielectric thickness (m), er) towards the layer above, or None,
+        "below": (thickness (m), er) towards the layer below, or None }
+    and is empty if the stackup cannot be read.
     """
     items, errors = _items_from_api(board)
     source = "API"
@@ -303,7 +308,7 @@ def _read_real_stackup(board):
         return {}, errors
 
     def gather(start, step):
-        """Somma i dielettrici dal rame in 'start' fino al rame successivo."""
+        """Sums the dielectrics from the copper at 'start' up to the next copper."""
         th_tot, er_w, i = 0.0, 0.0, start + step
         while 0 <= i < len(items) and items[i][0] != "cu":
             if items[i][0] == "diel":
@@ -318,7 +323,7 @@ def _read_real_stackup(board):
     result = {}
     for idx, it in enumerate(items):
         if it[0] == "cu" and it[2] > 0:
-            # Solder mask direttamente sopra/sotto questo rame (layer esterni)
+            # Solder mask directly above/below this copper (outer layers)
             mask = None
             for j in (idx - 1, idx + 1):
                 if 0 <= j < len(items) and items[j][0] == "mask":
@@ -329,16 +334,16 @@ def _read_real_stackup(board):
                 "below": gather(idx, +1),
                 "mask": mask,
             }
-    # Se la lettura e' riuscita via file, l'errore dell'API non interessa piu'
+    # If reading from the file succeeded, the API error no longer matters
     return result, ([] if result else errors)
 
 
 def _synthetic_stackup(board, er):
     """
-    Stackup stimato quando la scheda non ne ha uno definito: rame da 35 um
-    su ogni layer e dielettrico di spessore uguale fra layer adiacenti,
-    ricavato dallo spessore totale della scheda. E' solo una stima: su
-    schede a 4+ layer prepreg e core hanno spessori diversi.
+    Estimated stackup when the board has none defined: 35 um copper on every
+    layer and equal dielectric thickness between adjacent layers, derived from
+    the total board thickness. Only an estimate: on 4+ layer boards prepreg
+    and core have different thicknesses.
     """
     stack = list(board.GetEnabledLayers().CuStack())
     n = len(stack)
@@ -355,16 +360,16 @@ def _synthetic_stackup(board, er):
             "t": t,
             "above": (gap, er) if i > 0 else None,
             "below": (gap, er) if i < n - 1 else None,
-            "mask": None,  # stackup stimato: si usa il solder mask di default
+            "mask": None,  # estimated stackup: the default solder mask is used
         }
     return result
 
 
 def gap_for_z0(w, h, er, t, target, g_min=0.03e-3, g_max=3e-3):
     """
-    Gap (m) dalla massa coplanare che da' Z0 = target a larghezza w fissa,
-    per bisezione: l'impedenza cresce allargando il gap. None se il target
-    non e' raggiungibile nell'intervallo [g_min, g_max].
+    Gap (m) from the coplanar ground giving Z0 = target at a fixed width w,
+    by bisection: the impedance grows as the gap widens. None if the target
+    cannot be reached within [g_min, g_max].
     """
     z_lo, z_hi = cpwg_z0(w, g_min, h, er, t), cpwg_z0(w, g_max, h, er, t)
     if not (z_lo <= target <= z_hi):
@@ -381,24 +386,25 @@ def gap_for_z0(w, h, er, t, target, g_min=0.03e-3, g_max=3e-3):
 
 def read_stackup(board, er_override=None, h_override_m=None):
     """
-    Stackup da usare per il calcolo, con una nota che dice da dove viene.
+    Stackup to use for the calculation, with a note telling where it comes
+    from.
 
-    Prima prova a leggere quello definito nella scheda; se non c'e' (file
-    convertiti da altri programmi spesso non lo hanno) usa una stima dallo
-    spessore totale con er = 4.5. er_override e h_override_m (metri), se
-    dati, sostituiscono costante dielettrica e spessore del dielettrico in
-    ogni caso.
+    It first tries to read the one defined in the board; if there is none
+    (files converted from other programs often lack it) it uses an estimate
+    from the total thickness with er = 4.5. er_override and h_override_m
+    (meters), if given, replace the dielectric constant and the dielectric
+    thickness in any case.
 
-    Ritorna (stackup, nota).
+    Returns (stackup, note).
     """
     try:
         stackup, errors = _read_real_stackup(board)
     except Exception as exc:
         stackup, errors = {}, [str(exc)]
-    # Motivi dei problemi di lettura (primi due), mostrati nella nota
+    # Reasons for the reading problems (first two), shown in the note
     err = f" ({'; '.join(errors[:2])})" if errors and not stackup else ""
 
-    # Uno stackup e' utilizzabile se almeno un layer ha un dielettrico
+    # A stackup is usable if at least one layer has a dielectric
     usable = any(v["above"] or v["below"] for v in stackup.values())
     if usable:
         note = _("stackup letto dalla scheda")
@@ -417,18 +423,20 @@ def read_stackup(board, er_override=None, h_override_m=None):
     return stackup, note
 
 
-# Solder mask di default (valori predefiniti di KiCad) se lo stackup non lo descrive
+# Default solder mask (KiCad default values) if the stackup does not describe
+# it
 DEFAULT_MASK = (10e-6, 3.3)
 
 
 def layer_geometry(stackup, layer, outer_layers, solder_mask=True):
     """
-    Geometria del layer per il calcolo: dizionario con
-      kind: "micro" (layer esterno) o "strip" (interno),
-      h: dielettrico fra traccia e piano sotto (m),
-      h_top: dielettrico verso il piano sopra (solo stripline, m),
-      er: costante dielettrica (media pesata per la stripline), t: rame (m).
-    None se lo stackup non basta.
+    Layer geometry for the calculation: dictionary with
+      kind: "micro" (outer layer) or "strip" (inner),
+      h: dielectric between track and plane below (m),
+      h_top: dielectric towards the plane above (stripline only, m),
+      er: dielectric constant (weighted average for the stripline),
+      t: copper (m), sm_t / sm_er: solder mask (outer layers only).
+    None if the stackup is not sufficient.
     """
     info = stackup.get(layer)
     if info is None:
@@ -449,7 +457,7 @@ def layer_geometry(stackup, layer, outer_layers, solder_mask=True):
 
 
 def _formula_z0(g, w, gap):
-    """Z0 con le formule chiuse (veloci): usate come punto di partenza."""
+    """Z0 with the closed-form formulas (fast): used as a starting point."""
     if g["kind"] == "micro":
         if gap:
             return cpwg_z0(w, gap, g["h"], g["er"], g["t"])
@@ -458,7 +466,7 @@ def _formula_z0(g, w, gap):
 
 
 def field_z0(g, w, gap=None):
-    """Z0 col risolutore di campo 2D (preciso)."""
+    """Z0 with the 2D field solver (accurate)."""
     return field2d.line_z0(w, g["h"], g["er"], g["t"],
                            gap=gap if g["kind"] == "micro" else None,
                            h_top=g["h_top"], sm_t=g["sm_t"], sm_er=g["sm_er"])[0]
@@ -466,14 +474,14 @@ def field_z0(g, w, gap=None):
 
 def _target_with_field(g, target, var, fixed_w, fixed_gap, x0):
     """
-    Trova la larghezza (var="w") o il gap (var="gap") che danno Z0 = target
-    col risolutore di campo. Per non fare decine di calcoli di campo si usa
-    la formula chiusa "corretta": a ogni passo si misura il rapporto
-    campo/formula nel punto attuale e si risolve la formula con il target
-    diviso per quel rapporto (bastano 2 passi, errore sotto l'1%).
+    Finds the width (var="w") or the gap (var="gap") giving Z0 = target with
+    the field solver. To avoid dozens of field calculations a "corrected"
+    closed-form formula is used: at each step the field/formula ratio is
+    measured at the current point and the formula is solved for the target
+    divided by that ratio (2 steps are enough, error below 1%).
     """
     x = x0
-    for _step in range(2):  # 2 passi: il rapporto campo/formula varia poco
+    for _step in range(2):  # 2 steps: the field/formula ratio changes little
         w = x if var == "w" else fixed_w
         gap = x if var == "gap" else fixed_gap
         ratio = field_z0(g, w, gap) / _formula_z0(g, w, gap)
@@ -493,11 +501,11 @@ def _target_with_field(g, target, var, fixed_w, fixed_gap, x0):
 def analyze_layer(stackup, layer, width_m, outer_layers, target_ohm, gap_m=None,
                   solder_mask=True):
     """
-    Impedenza di una traccia di larghezza 'width_m' sul layer dato, col
-    RISOLUTORE DI CAMPO 2D (field2d); le formule chiuse servono solo come
-    punto di partenza nella ricerca della larghezza/gap per il target.
-    gap_m: distanza dalla massa sullo stesso layer (solo layer esterni).
-    Ritorna (tipo, z0, larghezza_per_target_m, gap_per_target_m, nota).
+    Impedance of a track of width 'width_m' on the given layer, with the 2D
+    FIELD SOLVER (field2d); the closed-form formulas are only a starting point
+    in the search for the width/gap for the target.
+    gap_m: distance from the ground on the same layer (outer layers only).
+    Returns (type, z0, width_for_target_m, gap_for_target_m, note).
     """
     g = layer_geometry(stackup, layer, outer_layers, solder_mask)
     if g is None:
@@ -514,7 +522,7 @@ def analyze_layer(stackup, layer, width_m, outer_layers, target_ohm, gap_m=None,
                     if gap_m else None)
         note = _("campo 2D")
     except Exception as exc:
-        # Ripiego sulle formule se il calcolo di campo fallisce
+        # Fall back on the formulas if the field calculation fails
         z0 = _formula_z0(g, width_m, gap_m)
         w_target = width_for_z0(lambda ww: _formula_z0(g, ww, gap_m),
                                 target_ohm, g["h"] * 0.02, g["h"] * 8)
@@ -525,10 +533,10 @@ def analyze_layer(stackup, layer, width_m, outer_layers, target_ohm, gap_m=None,
 
 def diagnose_stackup(board, log_path):
     """
-    Scrive su file cosa vede il plugin nello stackup: nomi disponibili,
-    ogni elemento con tipo, spessore e layer. Ogni passo e' scritto su
-    disco prima di eseguire il successivo, e ogni chiamata e' protetta,
-    cosi' gli errori finiscono nel file.
+    Writes to a file what the plugin sees in the stackup: available names,
+    every item with type, thickness and layer. Each step is written to disk
+    before running the next one, and every call is protected, so the errors
+    end up in the file.
     """
     import os
 
@@ -572,17 +580,17 @@ def diagnose_stackup(board, log_path):
 
 def detect_coplanar(board, tracks, layer, ground_filter="GND", zone_cache=None):
     """
-    Cerca la massa vicino a un gruppo di tracce (stessa net/layer/larghezza).
+    Looks for ground near a group of tracks (same net/layer/width).
 
-    - Massa laterale (coplanare): da alcuni punti lungo le tracce misura la
-      distanza dal rame di massa sullo stesso layer, sui due lati. Se la
-      massa c'e' dai due lati in almeno meta' delle misure, ritorna la
-      mediana come gap; altrimenti None (nessuna massa laterale).
-    - Piano sotto: frazione dei punti lungo le tracce coperti dal rame di
-      massa sul layer di riferimento (quello adiacente, verso l'interno).
+    - Side ground (coplanar): from a few points along the tracks it measures
+      the distance from the ground copper on the same layer, on both sides. If
+      there is ground on both sides in at least half of the measurements, the
+      median is returned as gap; otherwise None (no side ground).
+    - Plane below: fraction of the points along the tracks covered by ground
+      copper on the reference layer (the adjacent one, towards the inside).
 
-    Ritorna (gap_m o None, frazione_piano_sotto o None).
-    'zone_cache' (dizionario) evita di rifare la ricerca delle zone.
+    Returns (gap_m or None, plane_below_fraction or None).
+    'zone_cache' (dictionary) avoids searching the zones again.
     """
     if zone_cache is None:
         zone_cache = {}
@@ -595,8 +603,8 @@ def detect_coplanar(board, tracks, layer, ground_filter="GND", zone_cache=None):
         return zone_cache[layer_id]
 
     def pads_on(layer_id):
-        # Pad della net di massa sul layer (anche il loro rame e' massa
-        # laterale), salvati nella stessa cache delle zone
+        # Pads of the ground net on the layer (their copper is side ground
+        # too), saved in the same cache as the zones
         key = ("pads", layer_id)
         if key not in zone_cache:
             zone_cache[key] = [
@@ -609,7 +617,7 @@ def detect_coplanar(board, tracks, layer, ground_filter="GND", zone_cache=None):
     max_dist = pcbnew.FromMM(1.0)
     margin = pcbnew.FromMM(1.0)
 
-    # Campioni: al massimo 8 punti per gruppo, ripartiti fra le tracce
+    # Samples: at most 8 points per group, spread over the tracks
     straight = [t for t in tracks if t.Type() == pcbnew.PCB_TRACE_T]
     pick = sorted(straight, key=lambda t: -t.GetLength())[:4]
     gaps = []
@@ -623,16 +631,16 @@ def detect_coplanar(board, tracks, layer, ground_filter="GND", zone_cache=None):
     lateral = None
     if total and len(found) >= total / 2:
         found.sort()
-        lateral = found[len(found) // 2] * 1e-9  # mediana, in metri
+        lateral = found[len(found) // 2] * 1e-9  # median, in meters
 
-    # Piano di riferimento sotto: layer adiacente verso l'interno
+    # Reference plane below: adjacent layer towards the inside
     stack = _copper_layer_stack(board)
     below = None
     if layer in stack and len(stack) > 1:
         i = stack.index(layer)
         ref = stack[i + 1] if i == 0 else stack[i - 1]
         ref_zones = zones_on(ref)
-        # Indice di pad e via, calcolato una volta sola (chiave "holes")
+        # Index of pads and vias, computed only once (key "holes")
         if "holes" not in zone_cache:
             zone_cache["holes"] = _build_indexes(board)[1]
         holes = zone_cache["holes"]
@@ -641,14 +649,14 @@ def detect_coplanar(board, tracks, layer, ground_filter="GND", zone_cache=None):
             net = t.GetNetname()
             for p in geometry.sample_points_along_track(t, pcbnew.FromMM(0.5), 20):
                 all_pts.append(p)
-                # I punti vicini a pad/via della stessa net (estremita' della
-                # traccia, keep-out voluti sotto un pin) non contano come
-                # interruzione del piano: come nel Return Path
+                # The points near pads/vias of the same net (track ends,
+                # intended keep-outs under a pin) do not count as plane
+                # interruptions: as in Return Path
                 if not _near_item_on_net(holes, p, net, HOLE_EXCLUSION_RADIUS_NM):
                     pts.append(p)
-        # Traccia corta (es. 1-2 mm fra due pad): tutti i punti cadono vicino
-        # ai pad e verrebbero scartati, lasciando "-". In quel caso si usano
-        # comunque tutti i punti.
+        # Short track (e.g. 1-2 mm between two pads): all the points fall near
+        # the pads and would be discarded, leaving "-". In that case all the
+        # points are used anyway.
         if not pts:
             pts = all_pts
         if pts:
@@ -661,11 +669,11 @@ def detect_coplanar(board, tracks, layer, ground_filter="GND", zone_cache=None):
 
 def detect_pairs(net_names):
     """
-    Riconosce le coppie differenziali dai nomi delle net: suffissi
-    P/N, DP/DM, + / - (con eventuale separatore _ - .). Per esempio
+    Recognizes differential pairs from net names: suffixes P/N, DP/DM, + / -
+    (with an optional _ - . separator). For example
     "USB_DP"/"USB_DM", "/ETH/TX_P"/"/ETH/TX_N", "D+"/"D-".
 
-    Ritorna una lista di (nome_coppia, net_positiva, net_negativa).
+    Returns a list of (pair_name, positive_net, negative_net).
     """
     import re
 
@@ -688,8 +696,9 @@ def detect_pairs(net_names):
 
 def layer_model(stackup, layer, outer_layers):
     """
-    Modello fisico del layer: ("micro", h, er, t) per un layer esterno,
-    ("strip", b, er, t) per uno interno, oppure None se lo stackup non basta.
+    Physical model of the layer: ("micro", h, er, t) for an outer layer,
+    ("strip", b, er, t) for an inner one, or None if the stackup is not
+    sufficient.
     """
     info = stackup.get(layer)
     if info is None:
@@ -705,18 +714,19 @@ def layer_model(stackup, layer, outer_layers):
 
 
 def single_z0(model, w):
-    """Z0 singolo (ohm) di una traccia di larghezza w secondo il modello del layer."""
+    """Single-ended Z0 (ohm) of a track of width w according to the layer model."""
     kind, h, er, t = model
     return microstrip_z0(w, h, er, t) if kind == "micro" else stripline_z0(w, h, er, t)
 
 
 def diff_z0(model, w, s):
     """
-    Impedenza differenziale (ohm) di una coppia accoppiata sul bordo, con
-    larghezza w e spazio fra i bordi s (formule IPC-2141):
+    Differential impedance (ohm) of an edge-coupled pair, with width w and
+    edge-to-edge spacing s (IPC-2141 formulas):
       microstrip: Zdiff = 2*Z0*(1 - 0.48*exp(-0.96*s/h))
       stripline:  Zdiff = 2*Z0*(1 - 0.347*exp(-2.9*s/b))
-    Non considera massa coplanare accanto alla coppia.
+    Does not account for coplanar ground next to the pair (used only as a
+    starting point for the field solver).
     """
     kind, h, er, t = model
     z0 = single_z0(model, w)
@@ -726,18 +736,18 @@ def diff_z0(model, w, s):
 
 
 def width_for_diff(model, s, target, h_ref):
-    """Larghezza (m) che da' Zdiff = target a spazio s fissato, o None."""
+    """Width (m) giving Zdiff = target at a fixed spacing s, or None."""
     return width_for_z0(lambda w: diff_z0(model, w, s), target, h_ref * 0.02, h_ref * 8)
 
 
-# --------------------------------------------------------------------------
-# Coppie differenziali col risolutore di campo 2D
-# --------------------------------------------------------------------------
+# ---------------------------------------------------------------------
+# Differential pairs with the 2D field solver
+# ---------------------------------------------------------------------
 def pair_field(g, w, s, gap=None):
     """
-    Coppia differenziale col risolutore di campo (field2d.pair_z0) sulla
-    geometria 'g' di layer_geometry. gap: massa laterale sul lato esterno
-    (solo layer esterni). Ritorna (zdiff, zcomune, z_odd, z_even).
+    Differential pair with the field solver (field2d.pair_z0) on the
+    geometry 'g' from layer_geometry. gap: side ground on the outer side
+    (outer layers only). Returns (zdiff, zcommon, z_odd, z_even).
     """
     return field2d.pair_z0(w, s, g["h"], g["er"], g["t"],
                            gap=gap if g["kind"] == "micro" else None,
@@ -745,7 +755,7 @@ def pair_field(g, w, s, gap=None):
 
 
 def _model_from_geometry(g):
-    """Modello (tipo, h, er, t) per le formule chiuse, dalla geometria del layer."""
+    """Model (type, h, er, t) for the closed-form formulas, from the layer geometry."""
     if g["kind"] == "micro":
         return ("micro", g["h"], g["er"], g["t"])
     return ("strip", g["h"] + g["h_top"] + g["t"], g["er"], g["t"])
@@ -753,9 +763,9 @@ def _model_from_geometry(g):
 
 def width_for_diff_field(g, s, target, gap=None):
     """
-    Larghezza (m) che da' Zdiff = target col risolutore di campo, a spazio s
-    fissato. Come per le tracce singole: la formula IPC-2141 si "corregge"
-    col rapporto campo/formula misurato nel punto attuale (2 passi).
+    Width (m) giving Zdiff = target with the field solver, at a fixed spacing
+    s. As for single tracks: the IPC-2141 formula is "corrected" with the
+    field/formula ratio measured at the current point (2 steps).
     """
     model = _model_from_geometry(g)
     w = width_for_diff(model, s, target, g["h"])
@@ -773,10 +783,11 @@ def width_for_diff_field(g, s, target, gap=None):
 
 def pair_lateral_gap(board, tracks, layer, ground_filter="GND", zone_cache=None):
     """
-    Massa laterale accanto a una coppia: da punti lungo le tracce delle due
-    net si misura la distanza dalla massa sui due lati e si tiene la MINORE
-    (il lato esterno: dall'altro lato c'e' la traccia compagna). Se la massa
-    si trova in almeno meta' dei punti ritorna la mediana (m), altrimenti None.
+    Side ground next to a pair: from points along the tracks of the two nets
+    the distance from ground is measured on both sides and the SMALLER is kept
+    (the outer side: on the other side there is the partner track). If ground
+    is found in at least half of the points the median (m) is returned,
+    otherwise None.
     """
     if zone_cache is None:
         zone_cache = {}

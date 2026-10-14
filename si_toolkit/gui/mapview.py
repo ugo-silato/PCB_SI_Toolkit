@@ -1,10 +1,10 @@
 """
-Finestra "Mappa a colori": disegna la scheda (tracce, via, pad) e colora
-gli elementi analizzati secondo un valore numerico (es. densita' di
-corrente o tensione), con scala dei colori, zoom e lettura col mouse.
+"Color map" window: draws the board (tracks, vias, pads) and colors the
+analyzed elements according to a numeric value (e.g. current density or
+voltage), with a color scale, zoom and mouse readout.
 
-Disegnata con wxPython (nessuna dipendenza da matplotlib), dentro KiCad.
-Coordinate in mm, asse y verso il basso come in Pcbnew.
+Drawn with wxPython (no matplotlib dependency), inside KiCad.
+Coordinates in mm, y axis pointing down as in Pcbnew.
 """
 import math
 
@@ -15,8 +15,8 @@ from ..common.i18n import _
 
 def colormap(t):
     """
-    Colore per t fra 0 e 1: blu -> azzurro -> verde -> giallo -> rosso
-    (scala "a semaforo" leggibile anche su fondo scuro).
+    Color for t between 0 and 1: blue -> cyan -> green -> yellow -> red
+    ("traffic light" scale, readable on a dark background too).
     """
     t = max(0.0, min(1.0, t))
     stops = [
@@ -35,13 +35,13 @@ def colormap(t):
 
 class MapData:
     """
-    Dati da disegnare:
-    - background: segmenti di contesto [(x0, y0, x1, y1, w)] in grigio;
-    - pads: [(x, y, sx, sy)] rettangoli dei pad (ingombro);
-    - items: elementi colorati, dizionari con 'kind' ("track"/"via"),
-      geometria ('seg' = (x0, y0, x1, y1, w) oppure 'via' = (x, y, r)),
-      'values' = {nome_grandezza: valore} e 'label' (testo per il mouse);
-    - quantities: elenco (nome, unita') delle grandezze disponibili.
+    Data to draw:
+    - background: context segments [(x0, y0, x1, y1, w)] in gray;
+    - pads: [(x, y, sx, sy)] pad rectangles (extent);
+    - items: colored elements, dictionaries with 'kind' ("track"/"via"),
+      geometry ('seg' = (x0, y0, x1, y1, w) or 'via' = (x, y, r)),
+      'values' = {quantity_name: value} and 'label' (text for the mouse);
+    - quantities: list of (name, unit) of the available quantities.
     """
 
     def __init__(self, title, background, pads, items, quantities, markers=(),
@@ -51,17 +51,17 @@ class MapData:
         self.pads = pads
         self.items = items
         self.quantities = quantities
-        # Marcatori [(x, y, testo, (r, g, b))], es. IN / OUT sui pad scelti
+        # Markers [(x, y, text, (r, g, b))], e.g. IN / OUT on the chosen pads
         self.markers = list(markers)
-        # Grandezze la cui scala parte da zero (densita', corrente, %)
+        # Quantities whose scale starts from zero (density, current, %)
         self.zero_based = set(zero_based)
-        # Scale fisse {grandezza: (min, max)}: i colori hanno un significato
-        # assoluto (es. % del limite: 0-120%), non relativo alla mappa
+        # Fixed scales {quantity: (min, max)}: the colors have an absolute
+        # meaning (e.g. % of limit: 0-120%), not relative to the map
         self.fixed_ranges = dict(fixed_ranges or {})
 
 
 class MapPanel(wx.Panel):
-    """Area di disegno con zoom (rotella), spostamento (trascinamento) e lettura."""
+    """Drawing area with zoom (wheel), panning (drag) and readout."""
 
     def __init__(self, parent, data, on_hover):
         super().__init__(parent, style=wx.FULL_REPAINT_ON_RESIZE)
@@ -80,9 +80,9 @@ class MapPanel(wx.Panel):
         self.Bind(wx.EVT_MOTION, self.on_motion)
         self.Bind(wx.EVT_SIZE, lambda e: (self.Refresh(), e.Skip()))
 
-    # --- Trasformazione mm -> pixel ---
+    # --- mm -> pixel transform ---
     def fit(self):
-        """Inquadra tutti gli elementi colorati (con un margine)."""
+        """Fits all the colored elements in view (with a margin)."""
         pts = []
         for it in self.data.items:
             if it["kind"] == "track":
@@ -110,16 +110,16 @@ class MapPanel(wx.Panel):
     def to_mm(self, px, py):
         return (px - self.offset[0]) / self.scale, (py - self.offset[1]) / self.scale
 
-    # --- Valori e colori ---
+    # --- Values and colors ---
     def value_range(self):
         """
-        Estremi della scala dei colori:
-        - se la grandezza ha una scala fissa (fixed_ranges) si usa quella;
-        - per le grandezze "assolute" (zero_based) la scala va da zero al
-          massimo;
-        - altrimenti dal minimo al massimo (es. tensione).
-        Se i valori sono praticamente uguali, la scala si centra sul valore
-        e tutti gli elementi hanno lo stesso colore.
+        Limits of the color scale:
+        - if the quantity has a fixed scale (fixed_ranges) that one is used;
+        - for "absolute" quantities (zero_based) the scale goes from zero to
+          the maximum;
+        - otherwise from the minimum to the maximum (e.g. voltage).
+        If the values are practically equal, the scale is centred on the value
+        and all the elements get the same color.
         """
         if self.quantity in self.data.fixed_ranges:
             return self.data.fixed_ranges[self.quantity]
@@ -136,7 +136,7 @@ class MapPanel(wx.Panel):
         return lo, hi
 
     def all_equal(self):
-        """Vero se tutti gli elementi hanno (quasi) lo stesso valore."""
+        """True if all the elements have (almost) the same value."""
         vals = [it["values"].get(self.quantity) for it in self.data.items]
         vals = [v for v in vals if v is not None]
         if len(vals) < 2:
@@ -150,7 +150,7 @@ class MapPanel(wx.Panel):
             return wx.Colour(120, 120, 120)
         return wx.Colour(*colormap((v - lo) / (hi - lo)))
 
-    # --- Disegno ---
+    # --- Drawing ---
     def on_paint(self, event):
         if not self._fitted:
             self.fit()
@@ -162,19 +162,19 @@ class MapPanel(wx.Panel):
             return
         s = self.scale
 
-        # Pad (prima delle tracce, cosi' le tracce corte restano visibili)
+        # Pads (before the tracks, so short tracks stay visible)
         gc.SetPen(wx.TRANSPARENT_PEN)
         gc.SetBrush(wx.Brush(wx.Colour(80, 84, 94)))
         for x, y, sx, sy in self.data.pads:
             px, py = self.to_px(x - sx / 2, y - sy / 2)
             gc.DrawRectangle(px, py, max(sx * s, 1), max(sy * s, 1))
-        # Tracce di contesto in grigio
+        # Context tracks in gray
         for x0, y0, x1, y1, w in self.data.background:
             gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(wx.Colour(110, 114, 124)).Width(max(1.0, w * s)).Cap(wx.CAP_ROUND)))
             a, b = self.to_px(x0, y0), self.to_px(x1, y1)
             gc.StrokeLine(a[0], a[1], b[0], b[1])
 
-        # Elementi colorati
+        # Colored elements
         lo, hi = self.value_range()
         for it in self.data.items:
             col = self.color_of(it, lo, hi)
@@ -183,20 +183,20 @@ class MapPanel(wx.Panel):
                 width = max(2.0, w * s)
                 grad = it.get("grad", {}).get(self.quantity)
                 if grad is None:
-                    # Colore unico per tutto il tratto
+                    # Single color for the whole segment
                     gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(col).Width(width).Cap(wx.CAP_ROUND)))
                     a, b = self.to_px(x0, y0), self.to_px(x1, y1)
                     gc.StrokeLine(a[0], a[1], b[0], b[1])
                 else:
-                    # Sfumatura: il tratto e' diviso in N pezzi, ognuno col
-                    # colore del valore interpolato fra inizio e fine
+                    # Gradient: the segment is split into N pieces, each with
+                    # the color of the value interpolated between start and end
                     v0, v1 = grad
                     n = 12
                     for j in range(n):
                         f0, f1 = j / n, (j + 1) / n
-                        v = v0 + (v1 - v0) * (f0 + f1) / 2  # valore al centro del pezzo
+                        v = v0 + (v1 - v0) * (f0 + f1) / 2  # value at the middle of the piece
                         c = wx.Colour(*colormap((v - lo) / (hi - lo)))
-                        # estremi arrotondati solo su primo/ultimo pezzo
+                        # rounded ends only on the first/last piece
                         cap = wx.CAP_ROUND if j in (0, n - 1) else wx.CAP_BUTT
                         gc.SetPen(gc.CreatePen(wx.GraphicsPenInfo(c).Width(width).Cap(cap)))
                         a = self.to_px(x0 + (x1 - x0) * f0, y0 + (y1 - y0) * f0)
@@ -211,7 +211,7 @@ class MapPanel(wx.Panel):
                 rr = max(r * s, 3)
                 gc.DrawEllipse(px - rr, py - rr, 2 * rr, 2 * rr)
 
-        # Marcatori (IN / OUT): cerchio colorato con etichetta
+        # Markers (IN / OUT): colored circle with a label
         font = wx.Font(10, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD)
         for x, y, text, rgb in self.data.markers:
             px, py = self.to_px(x, y)
@@ -224,7 +224,7 @@ class MapPanel(wx.Panel):
         self.draw_colorbar(gc, lo, hi)
 
     def draw_colorbar(self, gc, lo, hi):
-        """Scala dei colori a destra, con i valori minimo, medio e massimo."""
+        """Color scale on the right, with the minimum, middle and maximum values."""
         w, h = self.GetClientSize()
         x, top, bar_h, bar_w = w - 95, 30, max(h - 80, 60), 18
         steps = 60
@@ -245,7 +245,7 @@ class MapPanel(wx.Panel):
                 gc.DrawText(_("tutti uguali:"), x - 30, top + bar_h + 8)
                 gc.DrawText(_fmt(v) + " " + unit, x - 30, top + bar_h + 22)
 
-    # --- Interazione ---
+    # --- Interaction ---
     def on_wheel(self, event):
         f = 1.2 if event.GetWheelRotation() > 0 else 1 / 1.2
         mx, my = event.GetPosition()
@@ -274,7 +274,7 @@ class MapPanel(wx.Panel):
         self.on_hover(self.nearest(x, y))
 
     def nearest(self, x, y):
-        """Elemento colorato sotto il mouse (entro qualche pixel), o None."""
+        """Colored element under the mouse (within a few pixels), or None."""
         tol = 6 / self.scale
         best, best_d = None, None
         for it in self.data.items:
@@ -290,14 +290,14 @@ class MapPanel(wx.Panel):
 
 
 class MapFrame(wx.Frame):
-    """Finestra con menu della grandezza, mappa e riga di lettura."""
+    """Window with the quantity menu, the map and the readout line."""
 
     def __init__(self, parent, data):
         super().__init__(parent, title=_(data.title), size=(1100, 700))
         panel = wx.Panel(self)
         top = wx.BoxSizer(wx.HORIZONTAL)
         top.Add(wx.StaticText(panel, label=_("Colora per:")), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
-        self.choice = wx.Choice(panel, choices=[f"{_(n)} ({u})" for n, u in data.quantities])  # nome tradotto
+        self.choice = wx.Choice(panel, choices=[f"{_(n)} ({u})" for n, u in data.quantities])  # translated name
         self.choice.SetSelection(0)
         top.Add(self.choice, 0, wx.RIGHT, 12)
         fit_btn = wx.Button(panel, label=_("Inquadra"))
@@ -326,7 +326,7 @@ class MapFrame(wx.Frame):
 
 
 def _fmt(v):
-    """Numero compatto per la scala dei colori."""
+    """Compact number for the color scale."""
     a = abs(v)
     if a == 0:
         return "0"

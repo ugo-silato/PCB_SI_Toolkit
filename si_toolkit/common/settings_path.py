@@ -1,12 +1,12 @@
 """
-Dove si salva il file delle impostazioni (settings.json).
+Where the settings file is saved (settings.json).
 
-Non nella cartella del plugin: installando con il Plugin Manager di KiCad,
-a ogni aggiornamento quella cartella viene sostituita e le impostazioni
-andrebbero perse. Si usa la cartella delle impostazioni utente di KiCad
-(es. %APPDATA%\\kicad\\10.0 su Windows), in un file dedicato.
-La prima volta, se esiste un settings.json nella cartella del plugin
-(versioni precedenti), viene copiato li'.
+Not in the plugin folder: when installed with KiCad's Plugin Manager, that
+folder is replaced at every update and the settings would be lost. KiCad's
+user settings folder is used instead (e.g. %APPDATA%\\kicad\\10.0 on
+Windows), in a dedicated file.
+The first time, if a settings.json exists in the plugin folder (previous
+versions), it is copied there.
 """
 import os
 import shutil
@@ -16,7 +16,7 @@ _OLD_PATH = os.path.join(_PLUGIN_DIR, "settings.json")
 
 
 def _user_config_dir():
-    """Cartella delle impostazioni utente di KiCad, o None se non ricavabile."""
+    """KiCad user settings folder, or None if it cannot be determined."""
     try:
         import pcbnew
 
@@ -29,14 +29,14 @@ def _user_config_dir():
 
 
 def settings_path():
-    """Percorso del file impostazioni (lo crea dove serve, migrando il vecchio)."""
+    """Path of the settings file (creates it where needed, migrating the old one)."""
     base = _user_config_dir()
     if base is None:
-        return _OLD_PATH  # ripiego: cartella del plugin, come prima
+        return _OLD_PATH  # fallback: plugin folder, as before
     path = os.path.join(base, "si_toolkit_settings.json")
     if not os.path.exists(path) and os.path.exists(_OLD_PATH):
         try:
-            shutil.copy(_OLD_PATH, path)  # migrazione una tantum
+            shutil.copy(_OLD_PATH, path)  # one-time migration
         except Exception:
             return _OLD_PATH
     return path

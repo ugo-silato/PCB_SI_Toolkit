@@ -1,16 +1,16 @@
 # -*- coding: utf-8 -*-
 """
-Verifica dell'installazione di openEMS usata dalla scheda openEMS.
+Check of the openEMS installation used by the openEMS tab.
 
-Controlla, senza simulare nulla:
-- che il Python indicato esista e sia a 64 bit;
-- che quel Python importi i moduli necessari (CSXCAD, openEMS, numpy,
-  h5py, matplotlib), con la cartella di openEMS fra quelle delle DLL;
-- che la cartella di openEMS esista e contenga le DLL e l'eseguibile.
+It checks, without simulating anything:
+- that the given Python exists and is 64-bit;
+- that this Python imports the required modules (CSXCAD, openEMS, numpy,
+  h5py, matplotlib), with the openEMS folder among the DLL folders;
+- that the openEMS folder exists and contains the DLLs and the executable.
 
-Dice cosa manca e prepara i comandi per installarlo: i pacchetti normali
-(numpy, h5py, matplotlib) con pip da Internet, i moduli di openEMS dai file
-.whl che si trovano nella cartella di openEMS (se ci sono).
+It tells what is missing and prepares the commands to install it: the
+ordinary packages (numpy, h5py, matplotlib) with pip from the Internet, the
+openEMS modules from the .whl files found in the openEMS folder (if any).
 """
 import glob
 import json
@@ -20,8 +20,8 @@ import sys
 
 from ..common.i18n import _
 
-# Moduli da controllare: (nome per import, nome per pip o None se viene
-# dalla distribuzione di openEMS)
+# Modules to check: (import name, pip name or None if it comes from the openEMS
+# distribution)
 MODULES = [
     ("CSXCAD", None),
     ("openEMS", None),
@@ -30,8 +30,8 @@ MODULES = [
     ("matplotlib", "matplotlib"),
 ]
 
-# Script eseguito DAL Python esterno: imposta la cartella delle DLL come fa
-# lo script di simulazione, prova gli import e stampa il risultato in JSON
+# Script run BY the external Python: it sets the DLL folder like the simulation
+# script does, tries the imports and prints the result as JSON
 _PROBE = r'''
 import json, os, struct, sys
 oe = sys.argv[1]
@@ -51,23 +51,23 @@ print(json.dumps(out))
 
 
 def _no_window():
-    """Flag per non aprire finestre nere durante il controllo (Windows)."""
+    """Flag to avoid opening black console windows during the check (Windows)."""
     return subprocess.CREATE_NO_WINDOW if sys.platform.startswith("win") else 0
 
 
 def check(python_exe, oe_dir):
     """
-    Esegue tutti i controlli. Ritorna un dizionario:
-      lines:    righe del rapporto, ciascuna (stato, testo) con stato
+    Runs all the checks. Returns a dictionary:
+      lines:    report lines, each (status, text) with status
                 "ok" / "warn" / "err";
-      pip:      pacchetti mancanti installabili con pip;
-      wheels:   file .whl di CSXCAD/openEMS trovati nella cartella openEMS,
-                da installare se quei moduli mancano;
-      ok:       True se tutto e' a posto.
+      pip:      missing packages that can be installed with pip;
+      wheels:   CSXCAD/openEMS .whl files found in the openEMS folder,
+                to install if those modules are missing;
+      ok:       True if everything is fine.
     """
     lines, pip_missing, wheels = [], [], []
 
-    # --- Cartella openEMS ---
+    # --- openEMS folder ---
     if not os.path.isdir(oe_dir):
         lines.append(("err", _("Cartella openEMS non trovata: {0}").format(oe_dir)))
     else:
@@ -78,12 +78,12 @@ def check(python_exe, oe_dir):
         else:
             lines.append(("err", _("La cartella {0} non sembra un'installazione di openEMS "
                                    "(mancano openEMS.exe o le DLL).").format(oe_dir)))
-        # File .whl dei moduli Python di openEMS (nelle distribuzioni Windows
-        # stanno di solito in una sottocartella "python")
+        # The .whl files of the openEMS Python modules (in the Windows
+        # distributions they are usually in a "python" subfolder)
         for pattern in ("**/CSXCAD*.whl", "**/openEMS*.whl"):
             wheels += glob.glob(os.path.join(oe_dir, pattern), recursive=True)
 
-    # --- Python esterno ---
+    # --- External Python ---
     if not os.path.exists(python_exe):
         lines.append(("err", _("Python non trovato: {0}").format(python_exe)))
         return {"lines": lines, "pip": [], "wheels": wheels, "ok": False}
@@ -125,8 +125,8 @@ def check(python_exe, oe_dir):
 
 def install_command(python_exe, pip_pkgs, wheels):
     """
-    Comando (lista) che installa i pacchetti mancanti: pip da Internet per
-    numpy/h5py/matplotlib, i file .whl per CSXCAD/openEMS. Va eseguito in una
-    finestra visibile, cosi' si vede l'avanzamento.
+    Command (list) that installs the missing packages: pip from the Internet
+    for numpy/h5py/matplotlib, the .whl files for CSXCAD/openEMS. To be run in
+    a visible window, so the progress can be seen.
     """
     return [python_exe, "-m", "pip", "install"] + list(wheels) + list(pip_pkgs)
