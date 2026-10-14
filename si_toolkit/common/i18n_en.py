@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-Dizionario italiano -> inglese per l'interfaccia del plugin.
+Italian -> English dictionary for the plugin interface.
 
-Chiave = testo italiano esattamente come compare nel codice (con i
-segnaposto {0}, {1:.2f} ... per i valori variabili), valore = traduzione.
-I segnaposto vanno mantenuti identici nella traduzione.
+Key = Italian text exactly as it appears in the code (with the
+placeholders {0}, {1:.2f} ... for variable values), value = translation.
+The placeholders must be kept identical in the translation.
 """
 
 EN = {
-    # --- Finestra e schede ---
+    # --- Window and tabs ---
     "PCB Signal Integrity Toolkit": "PCB Signal Integrity Toolkit",
     "Return Path": "Return Path",
     "Corrente DC": "DC Current",
@@ -20,7 +20,7 @@ EN = {
     "Aiuto": "Help",
     'Modulo "{0}" non ancora implementato.': 'Module "{0}" not implemented yet.',
 
-    # --- Colonne e parole ricorrenti ---
+    # --- Columns and recurring words ---
     "Stato": "Status",
     "OK": "OK",
     "Al limite": "Borderline",
@@ -81,7 +81,7 @@ EN = {
     "Impossibile selezionare la traccia: {0}": "Unable to select the track: {0}",
     "Impossibile selezionare: {0}": "Unable to select: {0}",
 
-    # --- Corrente DC ---
+    # --- DC Current ---
     "Ingresso:": "Input:",
     "Uscite (carichi)": "Outputs (loads)",
     "Corrente (A):": "Current (A):",
@@ -132,7 +132,7 @@ EN = {
     "OUT {0} {1:g} A": "OUT {0} {1:g} A",
     "{0} su {1}:  I = {2:.3f} A,  densita' = {3:.1f} A/mm2,  {4:.0f}% del limite,  V monte = {5:.2f} mV,  caduta = {6:.2f} mV":
         "{0} on {1}:  I = {2:.3f} A,  density = {3:.1f} A/mm2,  {4:.0f}% of limit,  V upstream = {5:.2f} mV,  drop = {6:.2f} mV",
-    # grandezze della mappa
+    # map quantities
     "Densita' di corrente": "Current density",
     "% del limite IPC": "% of IPC limit",
     "Tensione (IR drop)": "Voltage (IR drop)",
@@ -142,7 +142,7 @@ EN = {
     "   Rotella = zoom, trascina = sposta, mouse sopra = valori": "   Wheel = zoom, drag = pan, hover = values",
     "tutti uguali:": "all equal:",
 
-    # --- Impedenza ---
+    # --- Impedance ---
     "Filtro net (vuoto = tutte):": "Net filter (empty = all):",
     "Z0 target (ohm):": "Target Z0 (ohm):",
     "Gap massa (mm; auto, no):": "Ground gap (mm; auto, no):",
@@ -157,7 +157,7 @@ EN = {
     "da stackup ({0:.0f} um, Er {1:.1f})": "from stackup ({0:.0f} um, Er {1:.1f})",
     "di default (10 um, Er 3,3: non presente nello stackup)": "default (10 um, Er 3.3: not in the stackup)",
 
-    # --- Coppie differenziali ---
+    # --- Differential pairs ---
     "Filtro coppia (vuoto = tutte):": "Pair filter (empty = all):",
     "Zdiff target (ohm):": "Target Zdiff (ohm):",
     "Rileva e calcola": "Detect and calculate",
@@ -232,7 +232,7 @@ EN = {
     " (si apre una finestra; ci vuole circa un minuto).": " (a window opens; it takes about a minute).",
     "Nessuna simulazione ancora eseguita.": "No simulation run yet.",
 
-    # --- Opzioni ---
+    # --- Options ---
     "Generale": "General",
     "Lingua / Language:": "Lingua / Language:",
     "La lingua si applica alla prossima apertura del plugin.": "The language applies the next time the plugin is opened.",
@@ -251,7 +251,7 @@ EN = {
     "Mesh (mm):": "Mesh (mm):",
     "Margine attorno alla linea (mm):": "Margin around the line (mm):",
     "Cartella per i risultati di openEMS": "Folder for the openEMS results",
-    # --- Messaggi dei moduli di calcolo ---
+    # --- Messages from the calculation modules ---
     "rame da stackup": "copper from stackup",
     "rame da stackup (+{0:g} um su alcuni layer)": "copper from stackup (+{0:g} um on some layers)",
     "rame {0:g} um (impostato a mano)": "copper {0:g} um (set manually)",

@@ -1,24 +1,24 @@
 """
-Risolutore di campo 2D (quasi-TEM) per l'impedenza delle linee su PCB.
+2D field solver (quasi-TEM) for the impedance of PCB lines.
 
-Disegna la SEZIONE della linea (traccia, massa ai lati, piano sotto/sopra,
-dielettrico, aria) su una griglia rettangolare non uniforme, piu' fitta
-vicino ai bordi dei conduttori, e risolve l'equazione di Laplace
+It draws the line CROSS-SECTION (track, side ground, plane below/above,
+dielectric, air) on a non-uniform rectangular grid, finer near the
+conductor edges, and solves Laplace's equation
     div( eps * grad V ) = 0
-con la traccia a 1 V e le masse a 0 V (gradiente coniugato).
+with the track at 1 V and the grounds at 0 V (conjugate gradient).
 
-Dalla soluzione si ricava la capacita' per unita' di lunghezza come energia
-del campo: C = somma sui lati della griglia di a * (dV)^2. Si risolve due
-volte, con il dielettrico (C) e tutto in aria (C0), e:
-    Z0   = eta0 / sqrt(C * C0)        (eta0 = 376,73 ohm, C in unita' eps0)
+From the solution the capacitance per unit length is obtained as field
+energy: C = sum over the grid edges of a * (dV)^2. It is solved twice, with
+the dielectric (C) and all in air (C0), and:
+    Z0   = eta0 / sqrt(C * C0)        (eta0 = 376.73 ohm, C in eps0 units)
     eeff = C / C0
 
-E' lo stesso principio dei calcolatori "field solver" (es. quelli dei
-produttori di PCB): a differenza delle formule chiuse vale per qualsiasi
-geometria (gap stretti, dielettrici spessi, rame spesso).
+It is the same principle as the "field solver" calculators (e.g. those of
+PCB manufacturers): unlike closed-form formulas it holds for any geometry
+(narrow gaps, thick dielectrics, thick copper).
 
-Usa numpy se c'e' (veloce), altrimenti Python puro (piu' lento).
-Unita': metri.
+Uses numpy if available (fast), otherwise pure Python (slower).
+Units: meters.
 """
 import math
 
@@ -26,7 +26,7 @@ ETA0 = 376.730313668
 
 try:
     import numpy as _np
-except ImportError:  # Python di KiCad senza numpy: si usa la versione pura
+except ImportError:  # KiCad Python without numpy: the pure version is used
     _np = None
 
 _cache = {}
@@ -34,8 +34,8 @@ _cache = {}
 
 def _graded_lines(keys, lo, hi, fine, coarse, ratio=1.3):
     """
-    Linee di griglia fra lo e hi: passano per tutti i punti 'keys' e hanno
-    passo 'fine' vicino a questi punti, crescente di 'ratio' fino a 'coarse'.
+    Grid lines between lo and hi: they pass through all the 'keys' points and
+    have a 'fine' step near those points, growing by 'ratio' up to 'coarse'.
     """
     keys = sorted(set([lo, hi] + [k for k in keys if lo <= k <= hi]))
     lines = [keys[0]]
@@ -43,7 +43,7 @@ def _graded_lines(keys, lo, hi, fine, coarse, ratio=1.3):
         length = b - a
         if length <= 0:
             continue
-        # Dimensioni crescenti dai due estremi verso il centro dell'intervallo
+        # Sizes growing from both ends towards the middle of the interval
         steps_left, steps_right = [], []
         s = fine
         total = 0.0
@@ -65,16 +65,16 @@ def _graded_lines(keys, lo, hi, fine, coarse, ratio=1.3):
 
 def _solve(xs, ys, eps_cell, fixed):
     """
-    Risolve Laplace su griglia (xs, ys). eps_cell[i][j]: permittivita' della
-    cella fra xs[i]..xs[i+1] e ys[j]..ys[j+1]. fixed[i][j]: None (incognita)
-    oppure il potenziale imposto. Bordo sinistro (x = xs[0]) = asse di
-    simmetria (Neumann). Ritorna la capacita' (unita' eps0) del mezzo dominio.
+    Solves Laplace on the grid (xs, ys). eps_cell[i][j]: permittivity of the
+    cell between xs[i]..xs[i+1] and ys[j]..ys[j+1]. fixed[i][j]: None (unknown)
+    or the imposed potential. Left edge (x = xs[0]) = symmetry axis (Neumann).
+    Returns the capacitance (eps0 units) of the half domain.
     """
     nx, ny = len(xs), len(ys)
     dx = [xs[i + 1] - xs[i] for i in range(nx - 1)]
     dy = [ys[j + 1] - ys[j] for j in range(ny - 1)]
 
-    # Coefficienti dei lati: orizzontali (i,j)-(i+1,j) e verticali (i,j)-(i,j+1)
+    # Edge coefficients: horizontal (i,j)-(i+1,j) and vertical (i,j)-(i,j+1)
     ah = [[0.0] * ny for _ in range(nx - 1)]
     for i in range(nx - 1):
         for j in range(ny):
@@ -114,7 +114,7 @@ def _solve_numpy(nx, ny, ah, av, fixed):
     diag[:, 1:] += AV
 
     def apply(V):
-        # (A V) = diag*V - somma vicini pesati
+        # (A V) = diag*V - weighted sum of the neighbours
         out = diag * V
         out[:-1, :] -= AH * V[1:, :]
         out[1:, :] -= AH * V[:-1, :]
@@ -122,7 +122,7 @@ def _solve_numpy(nx, ny, ah, av, fixed):
         out[:, 1:] -= AV * V[:, :-1]
         return out
 
-    # Sistema sulle sole incognite: A_ff x = -A_fc Vc
+    # System on the unknowns only: A_ff x = -A_fc Vc
     b = -apply(V0)
     b[~free] = 0.0
     x = np.zeros((nx, ny))
@@ -157,7 +157,7 @@ def _solve_python(nx, ny, ah, av, fixed):
             if fixed[i][j] is None:
                 idx[(i, j)] = len(idx)
     n = len(idx)
-    nb = [[] for _ in range(n)]  # (indice incognita o None, coeff, potenziale fisso)
+    nb = [[] for _ in range(n)]  # (unknown index or None, coeff, fixed potential)
     diag = [0.0] * n
     b = [0.0] * n
     for (i, j), k in idx.items():
@@ -215,29 +215,29 @@ def _solve_python(nx, ny, ah, av, fixed):
 
 def line_z0(w, h, er, t=0.0, gap=None, h_top=None, fine=None, sm_t=0.0, sm_er=1.0):
     """
-    Impedenza Z0 (ohm) e costante dielettrica efficace di una traccia di
-    larghezza w e spessore t:
-    - h: dielettrico fra la traccia e il piano sotto;
-    - gap: distanza dalla massa sullo stesso layer (None = nessuna massa
-      laterale);
-    - h_top: dielettrico fra la traccia e un piano sopra (stripline);
-      None = aria sopra (microstrip).
-    - sm_t, sm_er: solder mask (solo microstrip), strato CONFORME di spessore
-      sm_t: copre la traccia sopra e ai lati, il dielettrico nel gap e la
-      massa laterale. sm_t = 0: nessun solder mask.
-    Ritorna (z0, eeff).
+    Impedance Z0 (ohm) and effective dielectric constant of a track of width w
+    and thickness t:
+    - h: dielectric between the track and the plane below;
+    - gap: distance from the ground on the same layer (None = no side
+      ground);
+    - h_top: dielectric between the track and a plane above (stripline);
+      None = air above (microstrip).
+    - sm_t, sm_er: solder mask (microstrip only), CONFORMAL layer of thickness
+      sm_t: it covers the track on top and on the sides, the dielectric in the
+      gap and the side ground. sm_t = 0: no solder mask.
+    Returns (z0, eeff).
     """
     key = (round(w, 9), round(h, 9), round(er, 4), round(t, 9),
            None if gap is None else round(gap, 9),
            None if h_top is None else round(h_top, 9), fine,
            round(sm_t, 9), round(sm_er, 4))
     if h_top is not None:
-        sm_t = 0.0  # stripline: niente solder mask
+        sm_t = 0.0  # stripline: no solder mask
     if key in _cache:
         return _cache[key]
 
     if fine is None:
-        # Griglia: passo fine circa 1/12 della dimensione piu' piccola
+        # Grid: fine step about 1/12 of the smallest dimension
         smallest = min(v for v in (w, h, gap or w, h_top or h, max(t, w / 20)) if v > 0)
         fine = smallest / 12.0
     coarse = max(w, h) / 3.0
@@ -249,7 +249,7 @@ def line_z0(w, h, er, t=0.0, gap=None, h_top=None, fine=None, sm_t=0.0, sm_er=1.
         xk.append(w / 2 + gap)
     yk = [0.0, h, h + t]
     if sm_t > 0:
-        # Linee di griglia sui bordi del solder mask
+        # Grid lines on the solder mask edges
         yk += [h + sm_t, h + t + sm_t]
         xk += [w / 2 + sm_t]
         if gap is not None:
@@ -264,11 +264,11 @@ def line_z0(w, h, er, t=0.0, gap=None, h_top=None, fine=None, sm_t=0.0, sm_er=1.
             for j, y in enumerate(ys):
                 on_metal_layer = h - 1e-12 <= y <= h + t + 1e-12
                 if j == 0 or j == ny - 1 or i == nx - 1:
-                    f[i][j] = 0.0  # piano sotto, bordo lontano / piano sopra
+                    f[i][j] = 0.0  # plane below, far edge / plane above
                 elif on_metal_layer and x <= w / 2 + 1e-12:
-                    f[i][j] = 1.0  # traccia
+                    f[i][j] = 1.0  # track
                 elif on_metal_layer and gap is not None and x >= w / 2 + gap - 1e-12:
-                    f[i][j] = 0.0  # massa coplanare
+                    f[i][j] = 0.0  # coplanar ground
         return f
 
     def eps_grid(e, sm_eps):
@@ -279,11 +279,11 @@ def line_z0(w, h, er, t=0.0, gap=None, h_top=None, fine=None, sm_t=0.0, sm_er=1.
                 if yc < h or (h_top is not None and yc > h + t):
                     cells[i][j] = e
                 elif h_top is not None and h <= yc <= h + t:
-                    cells[i][j] = e  # stripline: dielettrico anche ai lati della traccia
+                    cells[i][j] = e  # stripline: dielectric also beside the track
                 elif sm_t > 0 and yc > h:
-                    # Solder mask conforme: sul dielettrico nudo (gap e
-                    # dintorni) per sm_t, e attorno a traccia e massa
-                    # laterale (sopra e ai fianchi) per sm_t
+                    # Conformal solder mask: on the bare dielectric (gap and
+                    # surroundings) for sm_t, and around the track and the side
+                    # ground (top and sides) for sm_t
                     xc = (xs[i] + xs[i + 1]) / 2
                     over_trace = xc <= w / 2 + sm_t and yc <= h + t + sm_t
                     over_gnd = (gap is not None and xc >= w / 2 + gap - sm_t
@@ -294,7 +294,7 @@ def line_z0(w, h, er, t=0.0, gap=None, h_top=None, fine=None, sm_t=0.0, sm_er=1.
         return cells
 
     fixed = fixed_grid()
-    c = 2 * _solve(xs, ys, eps_grid(er, sm_er), fixed)    # x2: dominio intero (simmetria)
+    c = 2 * _solve(xs, ys, eps_grid(er, sm_er), fixed)    # x2: full domain (symmetry)
     c0 = 2 * _solve(xs, ys, eps_grid(1.0, 1.0), fixed)
     z0 = ETA0 / math.sqrt(c * c0)
     result = (z0, c / c0)
@@ -304,29 +304,29 @@ def line_z0(w, h, er, t=0.0, gap=None, h_top=None, fine=None, sm_t=0.0, sm_er=1.
 
 def pair_z0(w, s, h, er, t=0.0, gap=None, h_top=None, fine=None, sm_t=0.0, sm_er=1.0):
     """
-    Coppia differenziale accoppiata sul bordo: due tracce larghe w, con
-    spazio s fra i bordi. Stessi parametri di line_z0; 'gap' e' la distanza
-    dalla massa laterale sul lato ESTERNO di ciascuna traccia.
+    Edge-coupled differential pair: two tracks of width w, with edge-to-edge
+    spacing s. Same parameters as line_z0; 'gap' is the distance from the side
+    ground on the OUTER side of each track.
 
-    Si sfrutta la simmetria: si risolve solo meta' sezione (una traccia),
-    con l'asse fra le due tracce come bordo sinistro:
-    - modo DISPARI (le tracce a +1 V e -1 V, segnale differenziale): l'asse
-      e' a 0 V (bordo di Dirichlet) -> Z_odd;
-    - modo PARI (entrambe a +1 V, modo comune): l'asse e' un bordo
-      "libero" (Neumann), come in line_z0 -> Z_even.
-    Zdiff = 2 * Z_odd, Zcomune = Z_even / 2.
-    Ritorna (zdiff, zcomm, z_odd, z_even). Unita': metri.
+    Symmetry is exploited: only half of the cross-section (one track) is
+    solved, with the axis between the two tracks as left edge:
+    - ODD mode (tracks at +1 V and -1 V, differential signal): the axis is at
+      0 V (Dirichlet edge) -> Z_odd;
+    - EVEN mode (both at +1 V, common mode): the axis is a "free" edge
+      (Neumann), as in line_z0 -> Z_even.
+    Zdiff = 2 * Z_odd, Zcommon = Z_even / 2.
+    Returns (zdiff, zcomm, z_odd, z_even). Units: meters.
     """
     key = ("pair", round(w, 9), round(s, 9), round(h, 9), round(er, 4), round(t, 9),
            None if gap is None else round(gap, 9),
            None if h_top is None else round(h_top, 9), fine, round(sm_t, 9), round(sm_er, 4))
     if h_top is not None:
-        sm_t = 0.0  # stripline: niente solder mask
+        sm_t = 0.0  # stripline: no solder mask
     if key in _cache:
         return _cache[key]
 
-    x1 = s / 2          # bordo interno della traccia (dall'asse della coppia)
-    x2 = s / 2 + w      # bordo esterno
+    x1 = s / 2          # inner edge of the track (from the pair axis)
+    x2 = s / 2 + w      # outer edge
     if fine is None:
         smallest = min(v for v in (w, h, s / 2, gap or w, h_top or h, max(t, w / 20)) if v > 0)
         fine = smallest / 12.0
@@ -353,13 +353,13 @@ def pair_z0(w, s, h, er, t=0.0, gap=None, h_top=None, fine=None, sm_t=0.0, sm_er
             for j, y in enumerate(ys):
                 on_metal_layer = h - 1e-12 <= y <= h + t + 1e-12
                 if j == 0 or j == ny - 1 or i == nx - 1:
-                    f[i][j] = 0.0  # piano sotto, bordo lontano / piano sopra
+                    f[i][j] = 0.0  # plane below, far edge / plane above
                 elif odd and i == 0:
-                    f[i][j] = 0.0  # asse della coppia a 0 V (modo dispari)
+                    f[i][j] = 0.0  # pair axis at 0 V (odd mode)
                 elif on_metal_layer and x1 - 1e-12 <= x <= x2 + 1e-12:
-                    f[i][j] = 1.0  # traccia
+                    f[i][j] = 1.0  # track
                 elif on_metal_layer and gap is not None and x >= x2 + gap - 1e-12:
-                    f[i][j] = 0.0  # massa coplanare esterna
+                    f[i][j] = 0.0  # outer coplanar ground
         return f
 
     def eps_grid(e, sm_eps):
@@ -371,10 +371,10 @@ def pair_z0(w, s, h, er, t=0.0, gap=None, h_top=None, fine=None, sm_t=0.0, sm_er
                 if yc < h or (h_top is not None and yc > h + t):
                     cells[i][j] = e
                 elif h_top is not None and h <= yc <= h + t:
-                    cells[i][j] = e  # stripline: dielettrico anche fra le tracce
+                    cells[i][j] = e  # stripline: dielectric also between the tracks
                 elif sm_t > 0 and yc > h:
-                    # Solder mask conforme sopra/ai lati di tracce e massa e
-                    # sul dielettrico nudo (anche fra le due tracce)
+                    # Conformal solder mask on top of/beside tracks and ground
+                    # and on the bare dielectric (also between the two tracks)
                     over_trace = x1 - sm_t <= xc <= x2 + sm_t and yc <= h + t + sm_t
                     over_gnd = (gap is not None and xc >= x2 + gap - sm_t
                                 and yc <= h + t + sm_t)
@@ -387,8 +387,8 @@ def pair_z0(w, s, h, er, t=0.0, gap=None, h_top=None, fine=None, sm_t=0.0, sm_er
     z = {}
     for odd in (True, False):
         fixed = fixed_grid(odd)
-        # Mezzo dominio = una traccia intera: l'energia e' gia' la
-        # capacita' di una linea nel modo considerato (unita' eps0)
+        # Half domain = one whole track: the energy is already the capacitance
+        # of one line in the considered mode (eps0 units)
         c = _solve(xs, ys, eps_d, fixed)
         c0 = _solve(xs, ys, eps_0, fixed)
         z[odd] = ETA0 / math.sqrt(c * c0)

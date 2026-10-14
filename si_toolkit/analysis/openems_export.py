@@ -1,19 +1,20 @@
 """
-Modulo "openEMS": simulazione elettromagnetica (FDTD) di una linea.
+"openEMS" module: electromagnetic simulation (FDTD) of a line.
 
-Il plugin NON esegue openEMS dentro KiCad: esporta la geometria della linea
-selezionata (tracce, massa sullo stesso layer, piano sotto, dielettrico) in
-uno script Python autonomo e lo lancia con un Python separato in cui e'
-installato openEMS. Lo script simula, calcola S11, S21 e l'impedenza della
-linea e mostra i grafici (matplotlib), salvando anche PNG e CSV.
+The plugin does NOT run openEMS inside KiCad: it exports the geometry of
+the selected line (tracks, ground on the same layer, plane below,
+dielectric) into a standalone Python script and launches it with a separate
+Python where openEMS is installed. The script simulates, computes S11, S21
+and the line impedance and shows the plots (matplotlib), also saving PNG
+and CSV files.
 
-Modello (prima versione, volutamente semplice):
-- solo tracce su un layer ESTERNO (microstrip, eventualmente coplanare);
-- rame a spessore nullo (lamina PEC), dielettrico omogeneo con l'Er dello
-  stackup, piano di massa sotto pieno nella zona simulata;
-- massa sullo stesso layer ricavata dal rame riempito delle zone di massa,
-  campionato a griglia (scalinata alla risoluzione della mesh);
-- due porte concentrate da 50 ohm alle estremita' libere della linea.
+Model (first version, deliberately simple):
+- only tracks on an OUTER layer (microstrip, possibly coplanar);
+- zero-thickness copper (PEC sheet), homogeneous dielectric with the
+  stackup Er, solid ground plane below in the simulated area;
+- ground on the same layer taken from the filled copper of the ground
+  zones, sampled on a grid (staircased at the mesh resolution);
+- two 50 ohm ports at the free ends of the line.
 """
 import json
 import shutil
@@ -33,8 +34,8 @@ from ..common.i18n import _
 
 def _chain_ends(tracks):
     """
-    Estremita' "libere" della linea: punti che compaiono una sola volta fra
-    gli estremi delle tracce selezionate (tolleranza 1 um).
+    "Free" ends of the line: points that appear only once among the ends of
+    the selected tracks (1 um tolerance).
     """
     pts = []
     for t in tracks:
@@ -51,9 +52,9 @@ def _chain_ends(tracks):
 
 def build_model(board, tracks, ground_filter="GND", margin_mm=3.0, raster_mm=0.1):
     """
-    Raccoglie la geometria da simulare. Solleva ValueError con un messaggio
-    chiaro se la selezione non e' adatta. Coordinate in mm, relative
-    all'angolo del box simulato.
+    Collects the geometry to simulate. Raises ValueError with a clear message
+    if the selection is not suitable. Coordinates in mm, relative to the
+    corner of the simulated box.
     """
     tracks = [t for t in tracks if t.Type() == pcbnew.PCB_TRACE_T]
     if not tracks:
@@ -78,7 +79,7 @@ def build_model(board, tracks, ground_filter="GND", margin_mm=3.0, raster_mm=0.1
         raise ValueError(_("Stackup non sufficiente per questo layer."))
     _kind, h_m, er, _t = model
 
-    # Box simulato: ingombro delle tracce + margine
+    # Simulated box: extent of the tracks + margin
     mm = pcbnew.ToMM
     xs = [mm(p.x) for t in tracks for p in (t.GetStart(), t.GetEnd())]
     ys = [mm(p.y) for t in tracks for p in (t.GetStart(), t.GetEnd())]
@@ -89,8 +90,8 @@ def build_model(board, tracks, ground_filter="GND", margin_mm=3.0, raster_mm=0.1
              mm(t.GetEnd().x) - x0, mm(t.GetEnd().y) - y0, mm(t.GetWidth())]
             for t in tracks]
 
-    # Massa coplanare: rame riempito delle zone di massa sullo stesso layer,
-    # campionato a griglia e unito in strisce orizzontali
+    # Coplanar ground: filled copper of the ground zones on the same layer,
+    # sampled on a grid and merged into horizontal strips
     zones = geometry.find_reference_zones(board, layer, ground_filter)
     ground = []
     step = raster_mm
@@ -111,8 +112,9 @@ def build_model(board, tracks, ground_filter="GND", margin_mm=3.0, raster_mm=0.1
                 ground.append([run_start * step, j * step, i * step, (j + 1) * step])
                 run_start = None
 
-    # Via di massa dentro la zona simulata: collegano la massa coplanare
-    # al piano sotto (senza, la massa sopra resterebbe isolata nel modello)
+    # Ground vias inside the simulated area: they connect the coplanar ground
+    # to the plane below (without them the top ground would be isolated in the
+    # model)
     gnd_vias = []
     for v in board.GetTracks():
         if v.Type() != pcbnew.PCB_VIA_T:
@@ -123,9 +125,9 @@ def build_model(board, tracks, ground_filter="GND", margin_mm=3.0, raster_mm=0.1
         if x0 <= vx <= x1 and y0 <= vy <= y1:
             gnd_vias.append([vx - x0, vy - y0, mm(v.GetDrillValue()) / 2.0 + 0.025])
 
-    # Porte microstrip (MSL): occupano un tratto dritto della traccia a
-    # ciascuna estremita'. Servono segmenti finali paralleli agli assi e
-    # lunghi almeno 1 mm; altrimenti si ripiega sulle porte concentrate.
+    # Microstrip (MSL) ports: they occupy a straight part of the track at each
+    # end. The final segments must be parallel to the axes and at least 1 mm
+    # long; otherwise lumped ports are used.
     msl_ports, msl_note = [], ""
     for ex, ey, _w in ends:
         seg = None
@@ -142,7 +144,7 @@ def build_model(board, tracks, ground_filter="GND", margin_mm=3.0, raster_mm=0.1
         if abs(dx) > 1e-3 and abs(dy) > 1e-3:
             msl_note = _("il tratto finale della linea non e' orizzontale o verticale")
             break
-        lp = min(5.0, 0.8 * length)  # porta piu' lunga: misura piu' stabile
+        lp = min(5.0, 0.8 * length)  # longer port: more stable measurement
         if lp < 1.0:
             msl_note = _("il tratto finale dritto della linea e' piu' corto di 1,25 mm")
             break
@@ -158,16 +160,15 @@ def build_model(board, tracks, ground_filter="GND", margin_mm=3.0, raster_mm=0.1
     if len(msl_ports) != 2:
         msl_ports = []
 
-    # Unione delle strisce: strisce di righe consecutive con gli stessi
-    # bordi in x diventano un solo rettangolo (modello piu' leggero, niente
-    # strisce piu' sottili di una cella di mesh)
+    # Strip merging: strips of consecutive rows with the same x edges become a
+    # single rectangle (lighter model, no strips thinner than a mesh cell)
     merged = []
-    open_rects = {}  # (x0, x1) -> rettangolo in costruzione [x0, y0, x1, y1]
+    open_rects = {}  # (x0, x1) -> rectangle being built [x0, y0, x1, y1]
     for gx0, gy0, gx1, gy1 in sorted(ground, key=lambda r: (r[1], r[0])):
         key = (round(gx0, 6), round(gx1, 6))
         rect = open_rects.get(key)
         if rect is not None and abs(rect[3] - gy0) < 1e-9:
-            rect[3] = gy1  # prosegue il rettangolo della riga sopra
+            rect[3] = gy1  # continues the rectangle of the row above
         else:
             if rect is not None:
                 merged.append(rect)
@@ -194,8 +195,8 @@ def build_model(board, tracks, ground_filter="GND", margin_mm=3.0, raster_mm=0.1
 def write_and_launch(model, python_exe, out_root, f_max_ghz, f_mark_ghz, mesh_mm,
                      openems_path=r"D:\Programmi\openEMS", dump_fields=False, v_signal=1.0, t_rise_ns=1.0, lang="en"):
     """
-    Scrive lo script di simulazione in una cartella nuova e lo lancia con il
-    Python indicato, in una finestra separata. Ritorna la cartella.
+    Writes the simulation script into a new folder and launches it with the
+    given Python, in a separate window. Returns the folder.
     """
     stamp = time.strftime("%Y%m%d_%H%M%S")
     out_dir = os.path.join(out_root, _("sim_{0}").format(stamp))
@@ -208,15 +209,15 @@ def write_and_launch(model, python_exe, out_root, f_max_ghz, f_mark_ghz, mesh_mm
         template = f.read()
     script = template.replace("__MODEL_JSON__", json.dumps(params))
     script_path = os.path.join(out_dir, "simulate.py")
-    # Il calcolo del TDR sta in un file a parte (provabile fuori da KiCad):
-    # lo si copia accanto allo script, che lo importa da li'
+    # The TDR calculation is in a separate file (testable outside KiCad): it is
+    # copied next to the script, which imports it from there
     shutil.copy(os.path.join(os.path.dirname(__file__), "tdr_core.py"), out_dir)
     with open(script_path, "w", encoding="utf-8") as f:
         f.write(script)
 
-    # File .bat per rifare le GIF con un'altra tensione senza risimulare:
-    # chiede la tensione (e una scala fissa facoltativa) e rilancia lo
-    # script in modalita' --results sugli ultimi dati salvati
+    # .bat file to redo the GIFs with another voltage without re-simulating: it
+    # asks for the voltage (and an optional fixed scale) and relaunches the
+    # script in --results mode on the latest saved data
     bat = (
         _("@echo off\r\ncd /d \"%~dp0\"\r\nset /p V=Tensione del segnale in V (es. 5): \r\nset /p S=Scala colori fissa in V/mm (Invio = automatica): \r\nif \"%S%\"==\"\" (set S=0)\r\n\"{0}\" simulate.py --results --voltage %V% --scale %S%\r\n").format(python_exe)
     )
@@ -225,6 +226,6 @@ def write_and_launch(model, python_exe, out_root, f_max_ghz, f_mark_ghz, mesh_mm
 
     flags = 0
     if sys.platform.startswith("win"):
-        flags = subprocess.CREATE_NEW_CONSOLE  # finestra propria con il log
+        flags = subprocess.CREATE_NEW_CONSOLE  # own window with the log
     subprocess.Popen([python_exe, script_path], cwd=out_dir, creationflags=flags)
     return out_dir

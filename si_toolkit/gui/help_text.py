@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Testo della scheda "Aiuto" (HTML semplice per wx.html), in italiano e in
-inglese. page(lang) ritorna la pagina nella lingua scelta.
+Text of the "Help" tab (simple HTML for wx.html), in Italian and English.
+page(lang) returns the page in the chosen language.
 """
 
 _IT = """
@@ -179,9 +179,9 @@ it, pessimistic.</li>
 
 def page(lang):
     """
-    Pagina HTML dell'aiuto nella lingua scelta ("it" o "en"). I segnaposto
-    {img:nome} diventano le immagini di gui/img (nome_it.png / nome_en.png),
-    disegni che mostrano su cosa lavora ogni scheda e i dati da inserire.
+    HTML help page in the chosen language ("it" or "en"). The {img:name}
+    placeholders become the images in gui/img (name_it.png / name_en.png):
+    drawings showing what each tab works on and which data to enter.
     """
     import os
     import re
@@ -192,8 +192,8 @@ def page(lang):
     def img_tag(m):
         path = os.path.join(img_dir, f"{m.group(1)}_{'en' if lang == 'en' else 'it'}.png")
         if not os.path.exists(path):
-            return ""  # immagine mancante: si mostra solo il testo
-        # wx.html vuole un percorso con le barre "/" anche su Windows
+            return ""  # missing image: only the text is shown
+        # wx.html wants a path with "/" separators, even on Windows
         return f'<p><img src="{path.replace(os.sep, "/")}" width="600"></p>'
 
     return re.sub(r"\{img:(\w+)\}", img_tag, html)
@@ -201,14 +201,14 @@ def page(lang):
 
 def section(lang, key):
     """
-    Solo la sezione di una scheda (titolo, disegno e testo), per il
-    pulsante "?" delle schede. key = nome dell'immagine (es. "impedance").
+    Only the section of one tab (title, drawing and text), for the "?" button
+    of the tabs. key = name of the image (e.g. "impedance").
     """
     import re
 
     full = page(lang)
-    # La sezione inizia col titolo <h4> che precede l'immagine della scheda
-    # e finisce al titolo <h4> successivo
+    # The section starts with the <h4> title preceding the tab's image and ends
+    # at the next <h4> title
     m = re.search(r"(<h4>[^<]*</h4>\s*<p><img [^>]*/%s_\w+\.png[^>]*></p>.*?)(?=<h4>|$)" % key,
                   full, re.S)
     return m.group(1) if m else full

@@ -1,37 +1,34 @@
 """
-Funzioni geometriche condivise fra i moduli di analisi.
+Geometric functions shared by the analysis modules.
 
-Lo stile ricalca quello già usato in PnPImporter per la ricostruzione
-della netlist dal rame fisico (collision detection con GetEffectiveShape
-+ Collide), qui riadattato per capire se un punto o una traccia sono
-coperti da un piano di riferimento.
+The style follows the one already used in PnPImporter to rebuild the
+netlist from the physical copper (collision detection with
+GetEffectiveShape + Collide), adapted here to find out whether a point or
+a track is covered by a reference plane.
 """
 import pcbnew
 
 
 def sample_points_along_track(track, step_nm, max_samples=30):
     """
-    Restituisce una lista di punti (VECTOR2I) campionati lungo la
-    traccia ogni 'step_nm' nanometri (unità interna di KiCad).
+    Returns a list of points (VECTOR2I) sampled along the track every
+    'step_nm' nanometers (KiCad's internal unit).
 
-    Serve a controllare la presenza del piano di riferimento non solo
-    agli estremi della traccia ma anche nei punti intermedi: uno split
-    di piano può tagliare il percorso a metà, non solo in corrispondenza
-    dei pad di partenza/arrivo.
+    It is used to check the presence of the reference plane not only at the
+    track ends but also at intermediate points: a plane split can cut the path
+    in the middle, not only at the start/end pads.
 
-    'max_samples' limita il numero di punti anche su tracce molto lunghe
-    (es. una traccia verso un'antenna di 60-80 mm): senza questo limite,
-    con uno step di 1 mm si arriva a decine di punti per traccia, e ogni
-    punto costa una chiamata a HitTestFilledArea (vedi point_covered_by_zone)
-    più, in return_path.py, un controllo via di stitching. Su una board
-    con molte tracce lunghe il costo totale cresce rapidamente e può
-    bloccare l'interfaccia per decine di secondi: meglio un campionamento
-    più rado ma con un tetto fisso, che un'analisi esatta ma potenzialmente
-    bloccante.
+    'max_samples' limits the number of points even on very long tracks (e.g. a
+    60-80 mm track to an antenna): without this limit, with a 1 mm step there
+    would be dozens of points per track, and every point costs a call to
+    HitTestFilledArea (see point_covered_by_zone) plus, in return_path.py, a
+    stitching-via check. On a board with many long tracks the total cost grows
+    quickly and can freeze the interface for tens of seconds: better a sparser
+    sampling with a fixed cap than an exact but potentially blocking analysis.
     """
     start = track.GetStart()
     end = track.GetEnd()
-    length = track.GetLength()  # lunghezza in nm (unità interna KiCad)
+    length = track.GetLength()  # length in nm (KiCad internal unit)
 
     if length == 0:
         return [start]
@@ -48,21 +45,21 @@ def sample_points_along_track(track, step_nm, max_samples=30):
 
 def find_reference_zone(board, layer_id, net_name_filter=None):
     """
-    Cerca la prima ZONE riempita sul layer 'layer_id' che corrisponde a
-    un piano di riferimento (tipicamente GND o un'alimentazione),
-    filtrando per sottostringa nel nome net se specificato.
+    Looks for the first filled ZONE on layer 'layer_id' that corresponds to a
+    reference plane (typically GND or a supply), filtering by a substring of
+    the net name if given.
 
-    Ritorna l'oggetto ZONE oppure None se non trovata.
+    Returns the ZONE object or None if not found.
 
-    NOTA: questa è una scelta semplificata pensata per il caso comune
-    (un solo piano di riferimento per layer). Se la board ha più piani
-    separati sullo stesso layer (es. GND digitale e GND analogico
-    affiancati) va estesa per restituire una lista e farsi dire
-    dall'utente quale usare come riferimento per quel gruppo di tracce.
+    NOTE: this is a simplified choice meant for the common case (a single
+    reference plane per layer). If the board has several separate planes on
+    the same layer (e.g. digital GND and analog GND side by side) it must be
+    extended to return a list and let the user choose which one to use as
+    reference for that group of tracks.
     """
     for zone in board.Zones():
-        # IsOnLayer (e non GetLayer) perche' le zone multilayer hanno
-        # GetLayer() == undefined ma appartengono a piu' layer
+        # IsOnLayer (not GetLayer) because multilayer zones have GetLayer() ==
+        # undefined but belong to several layers
         if not zone.IsOnLayer(layer_id):
             continue
         if not zone.IsFilled():
@@ -77,17 +74,16 @@ def find_reference_zone(board, layer_id, net_name_filter=None):
 
 def find_reference_zones(board, layer_id, net_name_filter=None):
     """
-    Come find_reference_zone, ma ritorna TUTTE le zone riempite del layer
-    che corrispondono al filtro (lista, anche vuota).
+    Like find_reference_zone, but returns ALL the filled zones of the layer
+    that match the filter (a list, possibly empty).
 
-    Serve perché sul layer di riferimento possono esistere più pour
-    separati con la stessa net (es. un'isola di massa vicino a un
-    connettore): prendere solo il primo faceva risultare "scoperti" i
-    punti coperti dagli altri pour.
+    Needed because the reference layer can hold several separate pours with
+    the same net (e.g. a ground island near a connector): taking only the
+    first one made the points covered by the other pours look "uncovered".
     """
     zones = []
     for zone in board.Zones():
-        # IsOnLayer: vedi nota in find_reference_zone (zone multilayer)
+        # IsOnLayer: see the note in find_reference_zone (multilayer zones)
         if not zone.IsOnLayer(layer_id):
             continue
         if not zone.IsFilled():
@@ -98,7 +94,7 @@ def find_reference_zones(board, layer_id, net_name_filter=None):
 
 
 def point_covered_by_any_zone(zones, layer_id, point, accuracy_nm=0):
-    """Vero se il punto è coperto dal riempimento di almeno una delle zone."""
+    """True if the point is covered by the fill of at least one of the zones."""
     for zone in zones:
         if zone.HitTestFilledArea(layer_id, point, accuracy_nm):
             return True
@@ -107,10 +103,10 @@ def point_covered_by_any_zone(zones, layer_id, point, accuracy_nm=0):
 
 def point_covered_by_zone(zone, layer_id, point, accuracy_nm=0):
     """
-    Vero se 'point' è coperto dal riempimento della zona sul layer
-    indicato. Usa HitTestFilledArea, che lavora sul poligono di rame
-    effettivamente versato (già scontato di clearance e thermal relief),
-    non sull'outline disegnato a mano dall'utente in fase di progetto.
+    True if 'point' is covered by the zone fill on the given layer. Uses
+    HitTestFilledArea, which works on the copper polygon actually poured
+    (already reduced by clearance and thermal relief), not on the outline
+    drawn by the user while designing.
     """
     if zone is None:
         return False
@@ -119,17 +115,17 @@ def point_covered_by_zone(zone, layer_id, point, accuracy_nm=0):
 
 def lateral_gaps(zones, layer_id, track, step_nm, max_nm, n_samples, margin_nm, pads=()):
     """
-    Misura, da alcuni punti lungo una traccia rettilinea, la distanza fra il
-    bordo della traccia e il rame riempito delle 'zones' sullo stesso layer,
-    separatamente sui due lati. Si avanza a passi di 'step_nm' fino a
-    'max_nm' dal bordo; se non si trova rame il lato vale None.
+    Measures, from a few points along a straight track, the distance between
+    the track edge and the filled copper of 'zones' on the same layer,
+    separately on the two sides. It advances in 'step_nm' steps up to 'max_nm'
+    from the edge; if no copper is found that side is None.
 
-    Ritorna una lista di (gap_lato_1, gap_lato_2) in nm, uno per punto di
-    prova. I punti vicini alle estremita' (entro 'margin_nm') si saltano:
-    li' ci sono pad e curve, e la distanza non e' rappresentativa.
+    Returns a list of (gap_side_1, gap_side_2) in nm, one per test point. The
+    points near the ends (within 'margin_nm') are skipped: pads and bends are
+    there, and the distance is not representative.
 
-    'pads': pad di massa sullo stesso layer; anche il loro rame conta come
-    massa laterale (es. il pad GND di un condensatore accanto alla linea).
+    'pads': ground pads on the same layer; their copper also counts as side
+    ground (e.g. the GND pad of a capacitor next to the line).
     """
     start, end = track.GetStart(), track.GetEnd()
     dx, dy = end.x - start.x, end.y - start.y
@@ -137,10 +133,10 @@ def lateral_gaps(zones, layer_id, track, step_nm, max_nm, n_samples, margin_nm, 
     if length <= 0:
         return []
     ux, uy = dx / length, dy / length
-    nx, ny = -uy, ux  # normale alla traccia
+    nx, ny = -uy, ux  # normal to the track
     half_w = track.GetWidth() / 2.0
 
-    # Posizioni di prova lungo la traccia (distanza dall'inizio)
+    # Test positions along the track (distance from the start)
     if length > 2 * margin_nm and n_samples > 1:
         span = length - 2 * margin_nm
         positions = [margin_nm + span * (i + 0.5) / n_samples for i in range(n_samples)]
@@ -159,9 +155,9 @@ def lateral_gaps(zones, layer_id, track, step_nm, max_nm, n_samples, margin_nm, 
                 if point_covered_by_any_zone(zones, layer_id, p) or any(
                     pad.HitTest(p) for pad in pads
                 ):
-                    # Trovato rame fra (d - step) e d: si restringe l'intervallo
-                    # con una bisezione, cosi' il gap non e' arrotondato al
-                    # passo di ricerca (precisione di circa 1 um)
+                    # Copper found between (d - step) and d: the interval is
+                    # narrowed with a bisection, so the gap is not rounded to
+                    # the search step (about 1 um accuracy)
                     lo, hi = d - step_nm, d
                     for _ in range(6):
                         mid = (lo + hi) / 2.0
@@ -181,7 +177,7 @@ def lateral_gaps(zones, layer_id, track, step_nm, max_nm, n_samples, margin_nm, 
 
 
 def point_segment_distance(px, py, ax, ay, bx, by):
-    """Distanza (stesse unita' degli argomenti) fra il punto P e il segmento AB."""
+    """Distance (same units as the arguments) between point P and segment AB."""
     dx, dy = bx - ax, by - ay
     len2 = dx * dx + dy * dy
     if len2 == 0:
@@ -193,15 +189,16 @@ def point_segment_distance(px, py, ax, ay, bx, by):
 
 def pair_spacing(tracks_p, tracks_n, step_nm, max_samples, coupling_limit_nm):
     """
-    Distanza fra i bordi di due gruppi di tracce (le due net di una coppia
-    differenziale) misurata da punti lungo le tracce del primo gruppo.
+    Edge-to-edge distance between two groups of tracks (the two nets of a
+    differential pair) measured from points along the tracks of the first
+    group.
 
-    Per ogni punto prende la distanza dal segmento piu' vicino del secondo
-    gruppo meno meta' delle due larghezze (spazio di rame libero fra i bordi).
-    I punti con spazio oltre 'coupling_limit_nm' sono considerati non
-    accoppiati (le tracce li' si separano).
+    For each point it takes the distance from the closest segment of the
+    second group minus half of the two widths (free copper space between the
+    edges). Points with spacing above 'coupling_limit_nm' are considered
+    uncoupled (the tracks separate there).
 
-    Ritorna (spaziatura mediana in nm o None, frazione accoppiata, n. punti).
+    Returns (median spacing in nm or None, coupled fraction, no. of points).
     """
     segs = [(t.GetStart(), t.GetEnd(), t.GetWidth()) for t in tracks_n
             if t.Type() == pcbnew.PCB_TRACE_T]
@@ -219,7 +216,7 @@ def pair_spacing(tracks_p, tracks_n, step_nm, max_samples, coupling_limit_nm):
             gaps.append(max(best, 0.0))
     if not gaps:
         return None, 0.0, 0
-    if len(gaps) > max_samples:  # sottocampiona in modo uniforme
+    if len(gaps) > max_samples:  # uniform subsampling
         stride = len(gaps) / max_samples
         gaps = [gaps[int(i * stride)] for i in range(max_samples)]
     coupled = sorted(g for g in gaps if g <= coupling_limit_nm)

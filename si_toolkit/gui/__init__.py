@@ -1,1 +1,1 @@
-"""Interfaccia grafica (wxPython) del plugin."""
+"""Graphical user interface (wxPython) of the plugin."""
