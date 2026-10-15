@@ -6,7 +6,7 @@ A KiCad 10 plugin (Pcbnew) that brings together signal- and power-integrity chec
 
 | Tab | What it does |
 |---|---|
-| **Return Path** | Finds tracks that cross gaps in the reference plane underneath, and marks them on the board. **Return map (HF)** shows where the high-frequency return current of a selected line flows in the plane and how it detours around gaps |
+| **Return Path** | Finds tracks that cross gaps in the reference plane underneath, and marks them on the board. **Return map** (HF and DC) shows where the return current of a line flows in the ground, from its loads to the chosen ground exit |
 | **DC Current** | Solves the resistive network of tracks and vias: current, IR drop, density and IPC-2221 limit, with one or more loads and a color map |
 | **Impedance** | Z0 of every track with a 2D field solver, from the real board stackup (coplanar ground, solder mask) |
 | **Diff. pairs** | Differential and common-mode impedance with the field solver (odd/even modes) |
@@ -16,6 +16,12 @@ A KiCad 10 plugin (Pcbnew) that brings together signal- and power-integrity chec
 The interface is available in **English** and **Italian** (Options tab), and every tab has a **?** button with an explanatory drawing.
 
 <p align="center"><img src="si_toolkit/gui/img/impedance_en.png" width="600"></p>
+
+## Return current map
+
+Give the pad where the current enters and the ground pad where it leaves the board (e.g. the supply ground): the plugin finds the net and every load with a ground pin, also beyond series parts, estimates the current of each one from its type and value (TVS 0, resistor V/R, capacitor V/|Z|, MOSFET gate almost 0, collector V/(series R + pull-up) ...) and lets you check and correct it in a table. The map then shows, layer by layer, where the return flows in planes, coplanar ground and vias, at high frequency (it follows the track) or in DC (minimum resistance), with the share of every ground pin and via. Components and the tracks of the other nets can be drawn over the map to find your way. The currents are an estimate, not a circuit simulation: the result is theoretical.
+
+<p align="center"><img src="docs/return_map.jpg" width="700"></p>
 
 ## Installation
 
@@ -64,7 +70,7 @@ The plugin does **not** install openEMS. All other tabs work with KiCad's own Py
 
 ## In italiano
 
-Plugin per KiCad 10 che raccoglie in un'unica finestra i controlli di integrità del segnale e dell'alimentazione: **Return Path** (piano di riferimento interrotto sotto le tracce, con mappa della corrente di ritorno ad alta frequenza), **Corrente DC** (corrente, caduta IR e limite IPC-2221 con più carichi e mappa a colori), **Impedenza** e **Coppie differenziali** con risolutore di campo 2D dallo stackup reale, **Crosstalk** e simulazione elettromagnetica 3D con **openEMS** (parametri S, impedenza, TDR/TDT, GIF del campo).
+Plugin per KiCad 10 che raccoglie in un'unica finestra i controlli di integrità del segnale e dell'alimentazione: **Return Path** (piano di riferimento interrotto sotto le tracce, con mappa della corrente di ritorno in alta frequenza e in continua, dall'ingresso fino all'uscita di massa, con correnti dei carichi stimate dal tipo e dal valore dei componenti), **Corrente DC** (corrente, caduta IR e limite IPC-2221 con più carichi e mappa a colori), **Impedenza** e **Coppie differenziali** con risolutore di campo 2D dallo stackup reale, **Crosstalk** e simulazione elettromagnetica 3D con **openEMS** (parametri S, impedenza, TDR/TDT, GIF del campo).
 
 **Installazione:** scarica `si_toolkit_pcm_x.y.z.zip` dalla pagina [Releases](../../releases) e in KiCad usa *Gestore di plugin e contenuti → Installa da file...*. In alternativa copia la cartella `si_toolkit` in `Documenti\KiCad\10.0\scripting\plugins`.
 
