@@ -25,7 +25,9 @@ METADATA = {
     "description": "Return path, DC current/IR drop, impedance, diff pairs, crosstalk, openEMS EM simulation.",
     "description_full": (
         "Signal and power integrity checks on the open board:\n"
-        "- Return Path: tracks crossing gaps in the reference plane\n"
+        "- Return Path: tracks crossing gaps in the reference plane; return current map"
+        " (HF and DC) from an input pad to a ground exit, with loads found automatically"
+        " and their currents estimated from type and value\n"
         "- DC Current: current, IR drop and IPC-2221 limit on tracks and vias, multiple loads, color map\n"
         "- Impedance: Z0 with a 2D field solver from the board stackup (coplanar, solder mask)\n"
         "- Diff. pairs: Zdiff and common-mode Z with the field solver\n"
