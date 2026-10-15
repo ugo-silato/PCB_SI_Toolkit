@@ -161,6 +161,7 @@ def analyze_board(
     min_gap_mm=DEFAULT_MIN_GAP_MM,
     progress_callback=None,
     should_cancel=None,
+    tracks=None,
 ):
     """
     Analyzes the signal tracks and returns the list of ReturnPathIssue
@@ -177,10 +178,14 @@ def analyze_board(
 
     should_cancel(): if it returns True the analysis stops and returns what
     was found so far.
+
+    tracks: if given, only these tracks are analyzed (e.g. the selection in
+    Pcbnew); otherwise all the tracks of the board.
     """
     issues = []
     # Type() == ... instead of IsType([...]) (see _build_indexes)
-    tracks = [t for t in board.GetTracks() if t.Type() == pcbnew.PCB_TRACE_T]
+    source = board.GetTracks() if tracks is None else tracks
+    tracks = [t for t in source if t.Type() == pcbnew.PCB_TRACE_T]
     total = len(tracks)
 
     via_index, hole_index = _build_indexes(board)

@@ -13,12 +13,14 @@ import pcbnew
 import wx
 import wx.html  # HTML pages (Help, Check openEMS)
 
-from ..analysis import crosstalk, dc_current, impedance, openems_check, openems_export, return_path
+from ..analysis import (crosstalk, dc_current, impedance, net_path, openems_check, openems_export,
+                        return_map, return_path)
 from ..common import geometry
 from ..common import i18n
 from ..common.settings_path import settings_path
 from ..common.i18n import _
 from . import help_text, mapview
+from ..analysis import load_estimate
 
 # Thresholds on the current/IPC-2221 limit ratio: above CRITICAL the limit is
 # exceeded, above WARNING it is getting close (80%)
@@ -555,7 +557,7 @@ class DcCurrentPanel(wx.Panel):
         add_help_button(self, row3, "dc_current")
 
         # --- Results list (sorted by current density) ---
-        self.results_list = wx.ListCtrl(self, style=wx.LC_REPORT)
+        self.results_list = wx.ListCtrl(self, style=wx.LC_REPORT, size=(400, 150))
         for i, (name, w) in enumerate((("Stato", 95), ("Elemento", 70), ("Layer", 80),
                                        ("V monte (mV)", 90), ("Lungh. (mm)", 80), ("Largh. (mm)", 80),
                                        ("R (mOhm)", 75), ("Corrente (A)", 90),
@@ -959,7 +961,7 @@ class ImpedancePanel(wx.Panel):
         row_b.Add(sel_btn, 0)
         add_help_button(self, row_b, "impedance")
 
-        self.results_list = wx.ListCtrl(self, style=wx.LC_REPORT)
+        self.results_list = wx.ListCtrl(self, style=wx.LC_REPORT, size=(400, 150))
         for i, (name, w) in enumerate((("Stato", 95), ("Net", 150), ("Layer", 70),
                                        ("Tipo", 85), ("Largh. (mm)", 85),
                                        ("Lungh. tot. (mm)", 110), ("Z0 (ohm)", 80),
@@ -1163,7 +1165,7 @@ class DiffPairPanel(wx.Panel):
         row_b.Add(sel_btn, 0)
         add_help_button(self, row_b, "diff_pair")
 
-        self.results_list = wx.ListCtrl(self, style=wx.LC_REPORT)
+        self.results_list = wx.ListCtrl(self, style=wx.LC_REPORT, size=(400, 150))
         for i, (name, w) in enumerate((("Stato", 95), ("Coppia", 150), ("Layer", 65),
                                        ("Tipo", 80), ("Largh. (mm)", 85),
                                        ("Spaz. (mm)", 80), ("Accoppiata", 85),
@@ -1399,7 +1401,7 @@ class CrosstalkPanel(wx.Panel):
         row_c.Add(sel_btn, 0)
         add_help_button(self, row_c, "crosstalk")
 
-        self.results_list = wx.ListCtrl(self, style=wx.LC_REPORT)
+        self.results_list = wx.ListCtrl(self, style=wx.LC_REPORT, size=(400, 150))
         for i, (name, w) in enumerate((("Stato", 95), ("Net A", 140), ("Net B", 140),
                                        ("Layer", 65), ("Tratto par. (mm)", 110),
                                        ("Spazio min (mm)", 105), ("Spazio med (mm)", 110),
@@ -1802,6 +1804,14 @@ class ReturnPathPanel(wx.Panel):
         self.analyze_btn = wx.Button(self, label=_("Analizza"))
         self.analyze_btn.Bind(wx.EVT_BUTTON, self.on_analyze)
         btn_sizer.Add(self.analyze_btn, 0, wx.RIGHT, 5)
+        # Only the tracks selected in Pcbnew (the dialog stays open: click a
+        # track on the board, 'U' selects the whole connected track, then
+        # press this button)
+        self.analyze_sel_btn = wx.Button(self, label=_("Analizza selezione"))
+        self.analyze_sel_btn.SetToolTip(_("Analizza solo le tracce selezionate in Pcbnew "
+                                          "(tasto U in Pcbnew: seleziona tutta la traccia collegata)"))
+        self.analyze_sel_btn.Bind(wx.EVT_BUTTON, lambda e: self.on_analyze(e, selection=True))
+        btn_sizer.Add(self.analyze_sel_btn, 0, wx.RIGHT, 5)
 
         # Button to stop a running analysis: on large boards or with poorly
         # continuous planes the calculation can take several seconds, and the
@@ -1819,14 +1829,60 @@ class ReturnPathPanel(wx.Panel):
         # Selects all the tracks of the list in Pcbnew at once: a reliable
         # alternative to the graphic markers, which do not show up in some
         # builds
-        sel_all_btn = wx.Button(self, label=_("Seleziona tutte"))
+        sel_all_btn = wx.Button(self, label=_("Evidenzia tutte"))
         sel_all_btn.Bind(wx.EVT_BUTTON, self.on_select_all)
         btn_sizer.Add(sel_all_btn, 0)
         add_help_button(self, btn_sizer, "return_path")
 
+        # --- Return current map: input of the current and exit of the return ---
+        # The user gives only where the current enters (Input) and where the
+        # return leaves the board (Exit, e.g. the ground of the power supply).
+        # The net, the loads (components with a ground pin reached from the
+        # input, also through series parts) and the paths are found by the
+        # plugin; the current is shared equally among the loads.
+        # Two rows (input/exit, then frequency/resolution/button) so the tab
+        # does not force a very wide window
+        map_box = wx.StaticBoxSizer(wx.VERTICAL, self, _("Mappa della corrente di ritorno"))
+        map_row1, map_row2 = wx.BoxSizer(wx.HORIZONTAL), wx.BoxSizer(wx.HORIZONTAL)
+        map_box.Add(map_row1, 0, wx.BOTTOM, 4)
+        map_box.Add(map_row2, 0)
+        self.map_in_choice = wx.Choice(self, size=(130, -1))
+        self._map_in_pads = []   # (label, pad): pads of the net of the input
+        in_sel = wx.Button(self, label=_("Ingresso da selezione"))
+        in_sel.SetToolTip(_("Seleziona in Pcbnew il pad (o una traccia) da cui entra la corrente"))
+        in_sel.Bind(wx.EVT_BUTTON, self.on_map_from_selection)
+        self.map_exit_choice = wx.Choice(self, size=(170, -1))
+        self._map_exit_pads = []  # (label, pad); index 0 = automatic
+        exit_sel = wx.Button(self, label=_("Uscita da selezione"))
+        exit_sel.SetToolTip(_("Seleziona in Pcbnew il pad di massa dove colleghi la massa "
+                              "dell'alimentatore o dello strumento"))
+        exit_sel.Bind(wx.EVT_BUTTON, self.on_map_exit_from_selection)
+        for label, ctrl, btn in (("Ingresso:", self.map_in_choice, in_sel),
+                                 ("Uscita ritorno:", self.map_exit_choice, exit_sel)):
+            map_row1.Add(wx.StaticText(self, label=_(label)), 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT | wx.RIGHT, 5)
+            map_row1.Add(ctrl, 0, wx.RIGHT, 3)
+            map_row1.Add(btn, 0, wx.RIGHT, 10)
+        # Frequency: high (the return follows the track) or DC / low
+        # frequency (the return takes the path of minimum resistance)
+        self.map_freq_choice = wx.Choice(self, choices=[_("Alta frequenza (HF)"), _("Continua (DC)")])
+        self.map_freq_choice.SetSelection(0)
+        map_row2.Add(wx.StaticText(self, label=_("Frequenza:")), 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT | wx.RIGHT, 5)
+        map_row2.Add(self.map_freq_choice, 0, wx.RIGHT, 8)
+        # Resolution of the map: finer grid = sharper drawing but slower
+        # calculation (about 3x the time for High, 7x for Very high)
+        self.map_res_choice = wx.Choice(self, choices=[_("Normale"), _("Alta"), _("Molto alta")])
+        self.map_res_choice.SetSelection(0)
+        self.map_res_choice.SetToolTip(_("Risoluzione della mappa: piu' alta = disegno piu' fine ma calcolo piu' lento"))
+        map_row2.Add(wx.StaticText(self, label=_("Risoluzione:")), 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT | wx.RIGHT, 5)
+        map_row2.Add(self.map_res_choice, 0, wx.RIGHT, 8)
+        map_btn = wx.Button(self, label=_("Mappa ritorno"))
+        map_btn.SetToolTip(_("Trova da solo net, carichi e percorsi dall'ingresso, poi mostra la mappa"))
+        map_btn.Bind(wx.EVT_BUTTON, self.on_return_map)
+        map_row2.Add(map_btn, 0, wx.RIGHT, 5)
+        self._load_exit_pads()
 
         # --- Results list ---
-        self.results_list = wx.ListCtrl(self, style=wx.LC_REPORT)
+        self.results_list = wx.ListCtrl(self, style=wx.LC_REPORT, size=(400, 150))
         # "Status" column with traffic light: red = no stitching via nearby
         # (severe), yellow = a via is nearby (minor)
         self.results_list.InsertColumn(0, _("Stato"), width=90)
@@ -1849,12 +1905,22 @@ class ReturnPathPanel(wx.Panel):
         sizer.Add(top_sizer, 0, wx.ALL, 10)
         sizer.Add(btn_sizer, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 10)
         sizer.Add(self.results_list, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 10)
+        sizer.Add(map_box, 0, wx.LEFT | wx.RIGHT | wx.TOP, 10)
         sizer.Add(self.status_label, 0, wx.ALL, 10)
         self.SetSizer(sizer)
         # Remember the box values between sessions
         persist_all(self, "rp")
 
-    def on_analyze(self, event):
+    def on_analyze(self, event, selection=False):
+        # With selection=True only the tracks selected in Pcbnew are analyzed
+        # (read BEFORE clearing the overlay, which changes the selection)
+        sel_tracks = None
+        if selection:
+            sel_tracks = [t for t in self.board.GetTracks()
+                          if t.IsSelected() and t.Type() == pcbnew.PCB_TRACE_T]
+            if not sel_tracks:
+                self.status_label.SetLabel(_("Niente di selezionato in Pcbnew: seleziona una o piu' tracce."))
+                return
         # Removes any overlay of a previous analysis before starting again, so
         # old markers do not pile up on the board
         self.on_clear(event)
@@ -1895,6 +1961,7 @@ class ReturnPathPanel(wx.Panel):
             min_gap_mm=min_gap_mm,
             progress_callback=on_progress,
             should_cancel=lambda: self._cancel_requested,
+            tracks=sel_tracks,
         )
 
         self.results_list.DeleteAllItems()
@@ -1972,6 +2039,264 @@ class ReturnPathPanel(wx.Panel):
         except Exception as exc:
             self.status_label.SetLabel(_("Impossibile selezionare: {0}").format(exc))
 
+    def _load_exit_pads(self, select=None):
+        """
+        Choices for the exit of the return: 'automatic' (ground pins of the
+        input component) and the ground pads of connectors and test points,
+        where a power supply or an instrument is usually connected; plus a
+        pad added with 'Exit from selection'.
+        """
+        ref = (self.net_filter_ctrl.GetValue().strip() if hasattr(self, "net_filter_ctrl") else "") or "GND"
+        pads = []
+        for p in self.board.GetPads():
+            if ref.upper() not in p.GetNetname().upper():
+                continue
+            try:
+                fref = p.GetParentFootprint().GetReference()
+            except AttributeError:
+                continue
+            letters = "".join(ch for ch in fref if ch.isalpha()).upper()
+            if letters.startswith(("J", "P", "CN", "X", "TP", "CON")):
+                pads.append((dc_current.pad_label(p), p))
+        if select is not None and dc_current.pad_label(select) not in [lb for lb, _p in pads]:
+            pads.append((dc_current.pad_label(select), select))
+        pads.sort(key=lambda t: t[0])
+        self._map_exit_pads = [(_("(automatica: GND del componente di ingresso)"), None)] + pads
+        self.map_exit_choice.Set([lb for lb, _p in self._map_exit_pads])
+        labels = [lb for lb, _p in self._map_exit_pads]
+        k = labels.index(dc_current.pad_label(select)) if select is not None else 0
+        self.map_exit_choice.SetSelection(k)
+
+    def on_map_from_selection(self, event):
+        """
+        Input of the current from the Pcbnew selection: a selected pad
+        becomes the input; with a track or via selected, the pads of its net
+        are listed and the first one is proposed.
+        """
+        items = dc_current.selected_items(self.board)
+        if not items:
+            self.status_label.SetLabel(_("Niente di selezionato in Pcbnew: seleziona il pad di ingresso o una traccia."))
+            return
+        net = items[0].GetNetname()
+        if not net:
+            self.status_label.SetLabel(_("L'elemento selezionato non ha una net utilizzabile."))
+            return
+        self._map_in_pads = dc_current.list_pads(self.board, net)
+        labels = [lb for lb, _p in self._map_in_pads]
+        self.map_in_choice.Set(labels)
+        pad_sel = [dc_current.pad_label(i) for i in items if dc_current.is_pad(i)]
+        k = labels.index(pad_sel[0]) if pad_sel and pad_sel[0] in labels else 0
+        if labels:
+            self.map_in_choice.SetSelection(k)
+        self.status_label.SetLabel(_("Net {0}: controlla l'ingresso, scegli l'uscita del ritorno e premi Mappa ritorno.").format(net))
+
+    def on_map_exit_from_selection(self, event):
+        """Exit of the return: the ground pad selected in Pcbnew."""
+        ref = self.net_filter_ctrl.GetValue().strip() or "GND"
+        pads = [p for p in self.board.GetPads() if p.IsSelected() and ref.upper() in p.GetNetname().upper()]
+        if not pads:
+            self.status_label.SetLabel(_("Seleziona in Pcbnew un pad di massa ({0}).").format(ref))
+            return
+        self._load_exit_pads(select=pads[0])
+        self.status_label.SetLabel(_("Uscita del ritorno: {0}.").format(dc_current.pad_label(pads[0])))
+
+    def _map_context(self, res, ref):
+        """
+        Components and tracks of the other nets inside the map window, drawn
+        over the map only for orientation (they do not change the result).
+        Returns (footprints, others) in the MapData format.
+        """
+        mm = pcbnew.ToMM
+        ny, nx = res["copper"].shape[1:]
+        wx0, wy0 = res["x0"], res["y0"]
+        wx1, wy1 = wx0 + nx * res["cell"], wy0 + ny * res["cell"]
+
+        def inside(x0, y0, x1, y1):
+            # Rectangle touching the window
+            return x1 >= wx0 and x0 <= wx1 and y1 >= wy0 and y0 <= wy1
+
+        footprints = []
+        try:
+            fps = list(self.board.GetFootprints())
+        except AttributeError:
+            fps = []
+        for fp in fps:
+            fpads = []
+            box = None
+            for p in fp.Pads():
+                try:
+                    bb = p.GetBoundingBox()
+                    x0, y0 = mm(bb.GetLeft()), mm(bb.GetTop())
+                    x1, y1 = mm(bb.GetRight()), mm(bb.GetBottom())
+                except AttributeError:
+                    continue
+                gnd = ref.upper() in p.GetNetname().upper()
+                fpads.append(((x0 + x1) / 2, (y0 + y1) / 2, x1 - x0, y1 - y0, gnd))
+                box = (x0, y0, x1, y1) if box is None else \
+                    (min(box[0], x0), min(box[1], y0), max(box[2], x1), max(box[3], y1))
+            # Outline = pads extent with a small margin (the courtyard is not
+            # always present and the full bounding box includes the texts)
+            if box is None or not inside(*box):
+                continue
+            m = 0.3
+            footprints.append((box[0] - m, box[1] - m, box[2] + m, box[3] + m,
+                               fp.GetReference(), fpads))
+
+        others = []
+        for t in self.board.GetTracks():
+            if t.Type() != pcbnew.PCB_TRACE_T or t.GetNetname() == res["net"]:
+                continue
+            a, b = t.GetStart(), t.GetEnd()
+            x0, y0, x1, y1 = mm(a.x), mm(a.y), mm(b.x), mm(b.y)
+            if inside(min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1)):
+                others.append((x0, y0, x1, y1, mm(t.GetWidth())))
+        return footprints, others
+
+    def on_return_map(self, event):
+        """Button handler: an unexpected error is shown instead of being lost."""
+        try:
+            self._return_map()
+        except Exception:
+            import traceback
+
+            # Closes a progress window left open by the error
+            for w in wx.GetTopLevelWindows():
+                if isinstance(w, wx.ProgressDialog):
+                    w.Destroy()
+            wx.MessageBox(traceback.format_exc(), _("Mappa ritorno"), wx.OK | wx.ICON_ERROR, self)
+
+    def _return_map(self):
+        """
+        Return current map of the chosen net between the two pads: signal
+        path through tracks and vias, ground copper of every layer, ground
+        vias; solved with return_map and shown in the map window.
+        """
+        import numpy as np
+
+        # Input pad (chosen with 'Input from selection') and exit of the return
+        k_in = self.map_in_choice.GetSelection()
+        if k_in < 0 or not self._map_in_pads:
+            self.status_label.SetLabel(_("Scegli prima l'ingresso: seleziona il pad in Pcbnew e premi "
+                                         "Ingresso da selezione."))
+            return
+        pad_in = self._map_in_pads[k_in][1]
+        k_exit = self.map_exit_choice.GetSelection()
+        exit_pad = self._map_exit_pads[k_exit][1] if k_exit > 0 else None
+        ref = self.net_filter_ctrl.GetValue().strip() or "GND"
+        mode = "dc" if self.map_freq_choice.GetSelection() == 1 else "hf"
+
+        # Loads with the estimated current: the user checks and corrects
+        # them in a table before the map is calculated
+        try:
+            loads, volts, origin = load_estimate.estimate_loads(self.board, pad_in, ref, mode)
+        except ValueError as exc:
+            wx.MessageBox(_(str(exc)), _("Mappa ritorno"), wx.OK | wx.ICON_INFORMATION, self)
+            return
+        if not loads:
+            wx.MessageBox(_("Nessun carico trovato: dalla net del pad di ingresso non si raggiunge "
+                            "nessun componente con un pin di massa."), _("Mappa ritorno"),
+                          wx.OK | wx.ICON_INFORMATION, self)
+            return
+        dlg = LoadsDialog(self, self.board, pad_in, ref, mode, loads, volts, origin)
+        ok = dlg.ShowModal() == wx.ID_OK
+        chosen = dlg.result() if ok else None
+        dlg.Destroy()
+        if not chosen:
+            return
+        prog = wx.ProgressDialog(_("Mappa ritorno (HF)"), _("Ricerca del percorso..."), 100, self,
+                                 wx.PD_APP_MODAL | wx.PD_CAN_ABORT | wx.PD_AUTO_HIDE)
+
+        def progress(frac, msg):
+            cont, _skip = prog.Update(min(99, int(frac * 100)), msg)
+            return cont  # False = the user pressed Cancel
+
+        try:
+            res = return_map.build_map(self.board, None, pad_in, None, ref, progress, mode=mode,
+                                       targets=[(d["pad"], d["crossings"]) for d in chosen],
+                                       weights=[d["current"] for d in chosen],
+                                       load_refs=[d["ref"] for d in chosen],
+                                       exit_pad=exit_pad,
+                                       detail=(1.0, 1.5, 2.0)[max(0, self.map_res_choice.GetSelection())])
+        except ValueError as exc:
+            # Expected problems (path not found, no ground...): message box,
+            # so it is not missed, and in the status line
+            prog.Destroy()
+            self.status_label.SetLabel(_(str(exc)))
+            self.Layout()
+            wx.MessageBox(_(str(exc)), _("Mappa ritorno"), wx.OK | wx.ICON_INFORMATION, self)
+            return
+        prog.Destroy()
+
+        core = res["res"]
+        dc = res["mode"] == "dc"
+        # HF: % of the ideal peak under the track. DC: there is no "ideal"
+        # profile, the scale is the maximum current density of the map.
+        if dc:
+            # Scale on the 99th percentile, not on the maximum: right at a
+            # pin or via the density has a very sharp peak that would make
+            # everything else look blue
+            kpos = core["k"][res["copper"] & (core["k"] > 0)]
+            peak = float(np.percentile(kpos, 99)) if kpos.size else 1.0
+        else:
+            peak = res["k_peak"]
+        fields, vec, quantities, ranges = {}, {}, [], {}
+        for li, name in enumerate(res["layers"]):
+            # One map per ground layer: % of the ideal peak, NaN = no copper
+            q = _("Ritorno su {0}").format(name)
+            cu = res["copper"][li]
+            fields[q] = np.where(cu, core["k"][li] / peak * 100, np.nan)
+            vec[q] = (np.where(cu, core["kx"][li], np.nan), np.where(cu, core["ky"][li], np.nan))
+            quantities.append((q, "%"))
+            ranges[q] = (0.0, 100.0)
+        raster = {"x0": res["x0"], "y0": res["y0"], "cell": res["cell"],
+                  "fields": fields, "vec": vec,
+                  "unit_label": _("% del massimo") if dc else _("% del picco ideale")}
+
+        background = [(x0, y0, x1, y1, w) for x0, y0, x1, y1, _l, w in res["segments"]]
+        markers = [(res["start"][0], res["start"][1], _("inizio"), (60, 210, 90))]
+        for ex, ey in res.get("load_ends", [res["end"]]):
+            markers.append((ex, ey, _("fine"), (235, 70, 60)))
+        for vx, vy, _la, _lb in res["signal_vias"]:
+            markers.append((vx, vy, _("via segnale"), (255, 200, 60)))
+        # Ground pins of the two components, where the return enters/leaves
+        for gx, gy, gc in res.get("gnd_pins", []):
+            # Ground pin with the share of the return current through it
+            markers.append((gx, gy, f"GND {gc * 100:.0f}%", (230, 230, 230)))
+        # Ground vias as small squares; the most loaded ones with their share
+        pads = [(x, y, 0.5, 0.5) for x, y, _c in res["gnd_vias"]]
+        for x, y, c in res["gnd_vias"][:3]:
+            if c >= 0.05:
+                markers.append((x, y, f"{c * 100:.0f}%", (120, 220, 255)))
+
+        lines = []
+        if res.get("loads"):
+            # Share of each load, from the currents of the table
+            parts = [f"{r} {sh * 100:.0f}%" for r, sh in zip(res["loads"], res.get("load_shares", []))]
+            lines.append(_("Carichi: {0}.").format(", ".join(parts)))
+            lines.append(_("Risultato teorico: correnti stimate dal tipo e dal valore dei componenti, "
+                           "non da una simulazione del circuito."))
+        lines.append(_("Percorso {0:.1f} mm, {1} cambi di layer.").format(res["length"], len(res["signal_vias"])))
+        if dc:
+            lines.append(_("Continua: la corrente di ritorno prende la strada a resistenza minima fra le "
+                           "masse dei due componenti, anche lontano dalla traccia."))
+        elif res["signal_vias"]:
+            through_vias = sum(c for _x, _y, c in res["gnd_vias"])
+            lines.append(_("Ritorno fra i piani: {0:.0f}% attraverso le via di massa, {1:.0f}% per capacita' "
+                           "fra i piani (nessuna via vicina: rumore).").format(
+                min(100, through_vias * 100), min(100, core["plane_jump"] * 100)))
+        if not dc:
+            lines.append(_("Stima quasi-statica ad alta frequenza."))
+        summary = " ".join(lines)
+        footprints, others = self._map_context(res, ref)
+        data = mapview.MapData(
+            _("Ritorno di corrente - net {0}").format(res["net"]) + (" (DC)" if dc else " (HF)"),
+            background, pads, [], quantities, markers=markers,
+            fixed_ranges=ranges, raster=raster, summary=summary,
+            footprints=footprints, others=others)
+        mapview.MapFrame(self, data).Show()
+        self.status_label.SetLabel(summary)
+        self.Layout()
+
     def on_cancel(self, event):
         self._cancel_requested = True
         self.status_label.SetLabel(_("Interruzione in corso..."))
@@ -1981,3 +2306,126 @@ class ReturnPathPanel(wx.Panel):
             return_path.clear_highlight(self.board, self.dialog.markers)
             self.dialog.markers = []
         self.status_label.SetLabel("")
+
+
+class LoadsDialog(wx.Dialog):
+    """
+    Loads of the return map with their estimated current, before the
+    calculation: the user can exclude a load or correct its current. The
+    voltage of the line and the frequency (for the capacitors in HF) can
+    be changed too, then 'Recalculate estimate' updates the table.
+    """
+
+    COLS = ("Usa", "Componente", "Pin", "Corrente (mA)", "Stima")
+
+    def __init__(self, parent, board, pad_in, ref, mode, loads, volts, origin=None):
+        import wx.grid as gridlib
+
+        super().__init__(parent, title=_("Carichi della linea"), size=(900, 460),
+                         style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
+        self.board, self.pad_in, self.ref, self.mode = board, pad_in, ref, mode
+        self.loads = loads
+        note = wx.StaticText(self, label=_(
+            "Correnti stimate dal tipo e dal valore dei componenti (risultato teorico, non una "
+            "simulazione). Correggi i valori che conosci, togli la spunta ai carichi da escludere."))
+        note.Wrap(860)
+
+        # Voltage of the line and frequency for the capacitors
+        row = wx.BoxSizer(wx.HORIZONTAL)
+        row.Add(wx.StaticText(self, label=_("Tensione della linea (V):")), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 5)
+        self.v_ctrl = wx.TextCtrl(self, value=f"{volts:g}", size=(60, -1))
+        row.Add(self.v_ctrl, 0, wx.RIGHT, 6)
+        # Where the voltage comes from; if it was not found, the field is
+        # highlighted and the text asks for the real value
+        if origin:
+            v_note = wx.StaticText(self, label="(" + origin + ")")
+        else:
+            v_note = wx.StaticText(self, label=_("tensione non trovata: {0:g} V ipotizzati, "
+                                                 "scrivi quella vera").format(volts))
+            v_note.SetForegroundColour(wx.Colour(220, 60, 40))
+            self.v_ctrl.SetBackgroundColour(wx.Colour(255, 220, 200))
+        self.v_note = v_note
+        row.Add(v_note, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 15)
+        self.f_ctrl = None
+        if mode != "dc":
+            row.Add(wx.StaticText(self, label=_("Frequenza per i condensatori (MHz):")), 0,
+                    wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 5)
+            self.f_ctrl = wx.TextCtrl(self, value="10", size=(60, -1))
+            row.Add(self.f_ctrl, 0, wx.RIGHT, 15)
+        again = wx.Button(self, label=_("Ricalcola stima"))
+        again.Bind(wx.EVT_BUTTON, self.on_recalc)
+        row.Add(again, 0)
+
+        # Table: checkbox, reference, pin, current (editable), reason
+        self.grid = gridlib.Grid(self)
+        self.grid.CreateGrid(len(loads), len(self.COLS))
+        for c, name in enumerate(self.COLS):
+            self.grid.SetColLabelValue(c, _(name))
+        self.grid.SetColFormatBool(0)
+        self.grid.SetRowLabelSize(0)
+        self.fill()
+
+        btns = self.CreateStdDialogButtonSizer(wx.OK | wx.CANCEL)
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        sizer.Add(note, 0, wx.ALL, 8)
+        sizer.Add(row, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        sizer.Add(self.grid, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 8)
+        sizer.Add(btns, 0, wx.EXPAND | wx.ALL, 8)
+        self.SetSizer(sizer)
+
+    def fill(self):
+        """Writes the loads in the table; only 'Use' and the current are editable."""
+        for r, d in enumerate(self.loads):
+            self.grid.SetCellValue(r, 0, "1" if d["include"] else "")
+            self.grid.SetCellValue(r, 1, d["ref"])
+            self.grid.SetCellValue(r, 2, d["pin"])
+            self.grid.SetCellValue(r, 3, f"{d['current'] * 1000:.4g}")
+            self.grid.SetCellValue(r, 4, d["reason"])
+            for c in (1, 2, 4):
+                self.grid.SetReadOnly(r, c, True)
+        self.grid.AutoSizeColumns()
+
+    @staticmethod
+    def _num(text, default):
+        """Number from a text field, decimal comma accepted."""
+        try:
+            return float(text.strip().replace(",", "."))
+        except ValueError:
+            return default
+
+    def on_recalc(self, event):
+        """New estimate with the voltage and frequency written above."""
+        volts = self._num(self.v_ctrl.GetValue(), 3.3)
+        freq = self._num(self.f_ctrl.GetValue(), 10.0) * 1e6 if self.f_ctrl else 10e6
+        self.loads, _v, _o = load_estimate.estimate_loads(self.board, self.pad_in, self.ref, self.mode,
+                                                          volts=volts, freq_hz=freq)
+        # Voltage written by the user: no longer an assumption
+        self.v_note.SetLabel(_("(scritta da te)"))
+        self.v_note.SetForegroundColour(wx.NullColour)
+        self.v_ctrl.SetBackgroundColour(wx.NullColour)
+        self.Layout()
+        self.grid.ClearGrid()
+        n = self.grid.GetNumberRows()
+        if n < len(self.loads):
+            self.grid.AppendRows(len(self.loads) - n)
+        self.fill()
+
+    def result(self):
+        """
+        Loads kept by the user, with the current of the table (A). Empty
+        list (and a message) if nothing is left with a current above zero.
+        """
+        out = []
+        for r, d in enumerate(self.loads):
+            if self.grid.GetCellValue(r, 0) not in ("1", "true", "True"):
+                continue
+            ma = self._num(self.grid.GetCellValue(r, 3), 0.0)
+            if ma <= 0:
+                continue
+            item = dict(d)
+            item["current"] = ma / 1000.0
+            out.append(item)
+        if not out:
+            wx.MessageBox(_("Nessun carico con corrente maggiore di zero: inserisci almeno una corrente."),
+                          _("Mappa ritorno"), wx.OK | wx.ICON_INFORMATION, self)
+        return out

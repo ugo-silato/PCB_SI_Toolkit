@@ -6,7 +6,7 @@ A KiCad 10 plugin (Pcbnew) that brings together signal- and power-integrity chec
 
 | Tab | What it does |
 |---|---|
-| **Return Path** | Finds tracks that cross gaps in the reference plane underneath, and marks them on the board |
+| **Return Path** | Finds tracks that cross gaps in the reference plane underneath, and marks them on the board. **Return map (HF)** shows where the high-frequency return current of a selected line flows in the plane and how it detours around gaps |
 | **DC Current** | Solves the resistive network of tracks and vias: current, IR drop, density and IPC-2221 limit, with one or more loads and a color map |
 | **Impedance** | Z0 of every track with a 2D field solver, from the real board stackup (coplanar ground, solder mask) |
 | **Diff. pairs** | Differential and common-mode impedance with the field solver (odd/even modes) |
@@ -64,7 +64,7 @@ The plugin does **not** install openEMS. All other tabs work with KiCad's own Py
 
 ## In italiano
 
-Plugin per KiCad 10 che raccoglie in un'unica finestra i controlli di integrità del segnale e dell'alimentazione: **Return Path** (piano di riferimento interrotto sotto le tracce), **Corrente DC** (corrente, caduta IR e limite IPC-2221 con più carichi e mappa a colori), **Impedenza** e **Coppie differenziali** con risolutore di campo 2D dallo stackup reale, **Crosstalk** e simulazione elettromagnetica 3D con **openEMS** (parametri S, impedenza, TDR/TDT, GIF del campo).
+Plugin per KiCad 10 che raccoglie in un'unica finestra i controlli di integrità del segnale e dell'alimentazione: **Return Path** (piano di riferimento interrotto sotto le tracce, con mappa della corrente di ritorno ad alta frequenza), **Corrente DC** (corrente, caduta IR e limite IPC-2221 con più carichi e mappa a colori), **Impedenza** e **Coppie differenziali** con risolutore di campo 2D dallo stackup reale, **Crosstalk** e simulazione elettromagnetica 3D con **openEMS** (parametri S, impedenza, TDR/TDT, GIF del campo).
 
 **Installazione:** scarica `si_toolkit_pcm_x.y.z.zip` dalla pagina [Releases](../../releases) e in KiCad usa *Gestore di plugin e contenuti → Installa da file...*. In alternativa copia la cartella `si_toolkit` in `Documenti\KiCad\10.0\scripting\plugins`.
 

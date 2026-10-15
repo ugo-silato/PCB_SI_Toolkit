@@ -17,7 +17,7 @@ import sys
 import zipfile
 
 PLUGIN_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 METADATA = {
     "$schema": "https://go.kicad.org/pcm/schemas/v2",

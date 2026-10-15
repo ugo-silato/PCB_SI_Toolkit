@@ -18,6 +18,67 @@ impostazioni comuni stanno nella scheda <b>Opzioni</b>.</p>
 interruzioni del piano piu' larghe del <i>Gap minimo</i>. I marker sulla board:
 <b>User.1</b> = nessuna via di stitching vicina (grave), <b>User.2</b> = via
 vicina. <i>Pulisci overlay</i> li toglie.</p>
+<p><i>Analizza</i> controlla tutte le tracce; <i>Analizza selezione</i> solo
+quelle selezionate in Pcbnew (la finestra del plugin resta aperta: clicca la
+traccia sulla board, il tasto <b>U</b> seleziona tutta la traccia collegata).
+<i>Evidenzia tutte</i> seleziona in Pcbnew tutte le tracce della lista.</p>
+<p><b>Mappa della corrente di ritorno</b>: mostra dove scorre nella massa la
+corrente che torna indietro da una linea.</p>
+<ol>
+<li>Seleziona in Pcbnew il pad (o una traccia) da cui entra la corrente e premi
+<i>Ingresso da selezione</i>.</li>
+<li>In <i>Uscita ritorno</i> scegli il pad di massa dove colleghi la massa
+dell'alimentatore o dello strumento (elenco dei GND di connettori e test point,
+oppure selezionalo e premi <i>Uscita da selezione</i>); "automatica" usa i pin
+GND del componente di ingresso.</li>
+<li>Scegli la <i>Frequenza</i> e la <i>Risoluzione</i> (Alta e Molto alta: disegno
+piu' fine, calcolo circa 3 e 7 volte piu' lungo) e premi <i>Mappa ritorno</i>.</li>
+<li>Controlla la tabella dei carichi e premi OK.</li>
+</ol>
+<p><b>Carichi</b>: il plugin trova da solo la net e i componenti con un pin di
+massa raggiunti dall'ingresso, anche oltre resistenze, ferriti e altri
+componenti in serie. La corrente di ognuno e' <b>stimata</b> dal tipo e dal valore:
+TVS e zener 0 (non conducono); resistenza V/R; condensatore V/|Z| alla frequenza
+scelta (0 in DC); gate di un MOSFET quasi 0; base di un BJT (V-0,7)/R in serie;
+collettore o drain V/(R in serie + pull-up), cioe' con il transistor acceso;
+ingresso di un chip 1 uA; i casi non riconosciuti 1 mA di prova. La funzione
+del pin di un transistor si legge dal nome del pin (es. "C-3"), dal numero del
+pad o dal nome della net ("Net-(Q1-C)"). La colonna <i>Stima</i> dice come e'
+stato ottenuto ogni valore.</p>
+<p><b>Tensione</b>: si legge dal nome della net (VCC_3.3, 5V, 3V3); se manca si
+cerca risalendo per resistenze, induttanze e ferriti (es. un pull-up verso
+VCC_5V) o fra le net del componente di ingresso: e' la tensione di
+alimentazione, cioe' un limite superiore. Se non si trova si ipotizzano 3,3 V
+e il campo si colora: scrivi quella vera e premi <i>Ricalcola stima</i>. Con soli
+resistori e condensatori la tensione non cambia le percentuali.</p>
+<p><b>Spunta</b>: con la spunta il carico entra nella mappa (percorso, corrente e
+ritorno dai suoi pin GND); senza e' come se non ci fosse. Le quote si dividono
+fra i carichi spuntati in proporzione alla corrente: togliendo il carico
+maggiore, gli altri salgono. Una riga con corrente 0 e' ignorata anche se
+spuntata. Il risultato resta <b>teorico</b>: non e' una simulazione del circuito.</p>
+<p><b>Pin di massa</b>: la quota di ogni carico entra dai suoi pin GND (per un pin
+SMD che non tocca il piano si usa la via di massa piu' vicina, entro 3 mm). I
+pin GND di uno stesso componente sono collegati fra loro come da una massa
+interna comune: il calcolo fa uscire piu' corrente dai pin con la strada piu'
+facile verso l'uscita. Le etichette "GND xx%" danno la quota di ogni pin sul
+totale. Come il chip distribuisca davvero la corrente fra i pin dipende dal
+suo interno e non e' noto.</p>
+<p><b>Alta frequenza (HF)</b>: il ritorno segue la traccia (induttanza minima).
+<b>Continua (DC)</b>: il ritorno prende la strada a resistenza minima verso
+l'uscita, anche lontano dalla traccia (utile per vedere se correnti di potenza
+passano sotto un segnale); i condensatori non sono carichi e un condensatore in
+serie blocca la corrente. Il calcolo considera piani, massa complanare accanto
+alle tracce e zone di massa su altri layer, collegate dalle via di massa. Dove
+il segnale cambia layer il ritorno deve passare da un piano all'altro: con una
+via di massa vicina passa da li', senza passa per la capacita' fra i piani
+(rumore ed emissioni).</p>
+<p><b>Finestra della mappa</b>: si sceglie il layer da vedere. Colore = intensita'
+(in HF % del picco ideale, in DC % del massimo); le frecce danno solo il verso,
+per l'intensita' guardare il colore. Le via di massa piu' cariche mostrano la
+loro quota. Le caselle <i>Componenti</i> (contorno, sigla, pad: verdi quelli di
+massa) e <i>Altre tracce</i> (tracce delle altre net, in trasparenza) servono a
+orientarsi e non cambiano il calcolo. E' una stima quasi-statica; per il
+risultato completo usare openEMS.</p>
 
 <h4>Corrente DC</h4>
 {img:dc_current}
@@ -103,6 +164,67 @@ remembered between sessions; shared settings are in the <b>Options</b> tab.</p>
 (reference net, usually GND). Reports tracks crossing plane gaps wider than
 the <i>Minimum gap</i>. Board markers: <b>User.1</b> = no stitching via nearby
 (severe), <b>User.2</b> = via nearby. <i>Clear overlay</i> removes them.</p>
+<p><i>Analyze</i> checks all the tracks; <i>Analyze selection</i> only the
+ones selected in Pcbnew (the plugin window stays open: click the track on
+the board, the <b>U</b> key selects the whole connected track).
+<i>Highlight all</i> selects in Pcbnew all the tracks of the list.</p>
+<p><b>Return current map</b>: shows where the current returning from a line
+flows in the ground.</p>
+<ol>
+<li>Select in Pcbnew the pad (or a track) where the current enters and press
+<i>Input from selection</i>.</li>
+<li>In <i>Return exit</i> choose the ground pad where the supply or instrument
+ground is connected (list of connector and test point GND pads, or select it
+and press <i>Exit from selection</i>); "automatic" uses the GND pins of the
+input component.</li>
+<li>Choose the <i>Frequency</i> and the <i>Resolution</i> (High and Very high: finer
+drawing, about 3 and 7 times longer calculation) and press <i>Return map</i>.</li>
+<li>Check the loads table and press OK.</li>
+</ol>
+<p><b>Loads</b>: the plugin finds by itself the net and the components with a
+ground pin reached from the input, also beyond resistors, ferrites and other
+series parts. The current of each one is <b>estimated</b> from its type and value:
+TVS and zener 0 (they do not conduct); resistor V/R; capacitor V/|Z| at the
+chosen frequency (0 in DC); MOSFET gate almost 0; BJT base (V-0.7)/series R;
+collector or drain V/(series R + pull-up), i.e. with the transistor on; chip
+input 1 uA; unrecognized cases 1 mA as a placeholder. The pin function of a
+transistor is read from the pin name (e.g. "C-3"), the pad number or the net
+name ("Net-(Q1-C)"). The <i>Estimate</i> column tells how each value was
+obtained.</p>
+<p><b>Voltage</b>: read from the net name (VCC_3.3, 5V, 3V3); if missing it is
+searched through resistors, inductors and ferrites (e.g. a pull-up to VCC_5V)
+or among the nets of the input component: it is the supply voltage, i.e. an
+upper limit. If nothing is found 3.3 V is assumed and the field is
+highlighted: write the real one and press <i>Recalculate estimate</i>. With only
+resistors and capacitors the voltage does not change the percentages.</p>
+<p><b>Checkbox</b>: checked, the load enters the map (path, current and return
+from its GND pins); unchecked, it is as if it were not there. The shares are
+split among the checked loads in proportion to their current: removing the
+largest load, the others rise. A row with zero current is ignored even if
+checked. The result stays <b>theoretical</b>: it is not a circuit simulation.</p>
+<p><b>Ground pins</b>: the share of each load enters through its GND pins (for an
+SMD pin not touching the plane the nearest ground via within 3 mm is used).
+The GND pins of the same part are joined as by a common internal ground: the
+calculation lets more current leave from the pins with the easiest path to the
+exit. The "GND xx%" labels give the share of each pin on the total. How the
+chip really splits the current among its pins depends on its inside and is not
+known.</p>
+<p><b>High frequency (HF)</b>: the return follows the track (minimum inductance).
+<b>DC</b>: the return takes the minimum-resistance path to the exit, even far
+from the track (useful to see whether power currents flow under a signal);
+capacitors are not loads and a series capacitor blocks the current. The
+calculation includes planes, coplanar ground next to the tracks and ground
+zones on other layers, joined by the ground vias. Where the signal changes
+layer the return must move between planes: with a ground via nearby it goes
+through it, otherwise through the capacitance between the planes (noise and
+emissions).</p>
+<p><b>Map window</b>: choose the layer to view. Color = intensity (HF: % of the
+ideal peak, DC: % of the maximum); the arrows give only the direction, for the
+intensity look at the color. The most loaded ground vias show their share. The
+<i>Components</i> (outline, reference, pads: green the ground ones) and <i>Other
+tracks</i> (tracks of the other nets, semi-transparent) checkboxes help to find
+your way and do not change the calculation. It is a quasi-static estimate; for
+the full result use openEMS.</p>
 
 <h4>DC Current</h4>
 {img:dc_current}
