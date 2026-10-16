@@ -480,4 +480,244 @@ EN = {
     'Collettore/drain ({0}): nessuna resistenza che limita la corrente trovata, 1 mA di prova': 'Collector/drain ({0}): no current-limiting resistor found, 1 mA as a placeholder',
     'Transistor (pad {0}, funzione del pin non trovata): corrente non nota, 1 mA di prova': 'Transistor (pad {0}, pin function not found): current unknown, 1 mA as a placeholder',
     'Base ({0}): ({1:g} V - 0,7 V) / {2:g} ohm in serie': 'Base ({0}): ({1:g} V - 0.7 V) / {2:g} ohm in series',
+    'Frecce in movimento': 'Moving arrows',
+    "Le frecce scorrono nel verso della corrente, piu' veloci dove e' piu' forte": 'The arrows slide in the direction of the current, faster where it is stronger',
+
+    # --- Layout checks tab ---
+    "Controlli layout": "Layout checks",
+    "Controlli": "Checks",
+    "Controllo": "Check",
+    "Oggetto": "Object",
+    "Dettaglio": "Detail",
+    "Misura (mm)": "Measured (mm)",
+    "Limite (mm)": "Limit (mm)",
+    "Errore": "Error",
+    "Attenzione": "Warning",
+    "Disaccoppiamento": "Decoupling",
+    "Cambio layer": "Layer change",
+    "Via di stitching": "Stitching vias",
+    "Piano interrotto": "Plane gap",
+    "Soglie": "Thresholds",
+    "Condensatore: attenzione oltre (mm):": "Capacitor: warning beyond (mm):",
+    "Condensatore: errore oltre (mm):": "Capacitor: error beyond (mm):",
+    "Via di massa dei pad GND entro (mm):": "Ground via of GND pads within (mm):",
+    "Via di ritorno al cambio layer entro (mm):": "Return via at layer change within (mm):",
+    "Passo massimo via di stitching (mm):": "Maximum stitching via spacing (mm):",
+    "Gap minimo del piano (mm):": "Minimum plane gap (mm):",
+    "Cambio layer e bordo: ignora le net di alimentazione": "Layer change and edge: ignore supply nets",
+    "Condensatore vicino a ogni pin di alimentazione degli integrati e via di massa vicina ai pad GND":
+        "Capacitor close to every IC supply pin and ground via close to the GND pads",
+    "Via di segnale dove cambia il piano di riferimento: serve una via di massa vicina":
+        "Signal via where the reference plane changes: a ground via is needed nearby",
+    "Zone di massa su piu' layer: aree troppo lontane da una via di massa":
+        "Ground pours on several layers: areas too far from a ground via",
+    "Tracce che passano sopra un'interruzione del piano di massa":
+        "Tracks running over a gap of the ground plane",
+    "Esegui controlli": "Run checks",
+    "Controlla tutta la scheda (le zone devono essere riempite: tasto B)":
+        "Checks the whole board (zones must be filled: B key)",
+    "Mostra:": "Show:",
+    "Tutti": "All",
+    "Solo errori": "Errors only",
+    "Controlli in corso... (0%)": "Checks running... (0%)",
+    "Controlli in corso: {0} ({1}%)": "Checks running: {0} ({1}%)",
+    "Errore durante i controlli.": "Error during the checks.",
+    "Nessun problema trovato con le soglie impostate.": "No problem found with the thresholds set.",
+    "Interrotto dall'utente: {0} errori e {1} avvisi trovati prima dello stop.":
+        "Stopped by the user: {0} errors and {1} warnings found before the stop.",
+    "Nessuna zona di massa ({0}) riempita sulla scheda: riempi le zone (tasto B) prima dei controlli.":
+        "No filled ground zone ({0}) on the board: fill the zones (B key) before the checks.",
+    "Ogni massa e' su un solo layer: controllo delle via di stitching non necessario.":
+        "Every ground is on a single layer: stitching via check not needed.",
+    "Nessun condensatore fra {0} e massa: pin di alimentazione senza disaccoppiamento":
+        "No capacitor between {0} and ground: supply pin without decoupling",
+    "Condensatore piu' vicino {0}{1} a {2:.1f} mm dal pin": "Nearest capacitor {0}{1} at {2:.1f} mm from the pin",
+    " (sul lato opposto)": " (on the opposite side)",
+    "Condensatore {0}": "Capacitor {0}",
+    "Pin di massa dell'integrato": "IC ground pin",
+    "{0}: nessuna via di massa entro {1:g} mm dal pad GND; la via piu' vicina e' a {2:.1f} mm":
+        "{0}: no ground via within {1:g} mm of the GND pad; the nearest via is at {2:.1f} mm",
+    "{0}: nessuna via di massa entro 50 mm dal pad GND": "{0}: no ground via within 50 mm of the GND pad",
+    "Cambio layer {0}: il riferimento passa fra i piani {1}, nessuna via di massa entro {2:g} mm":
+        "Layer change {0}: the reference moves between planes {1}, no ground via within {2:g} mm",
+    "Cambio layer {0}: il riferimento passa fra i piani {1}, via di massa a {2:.1f} mm":
+        "Layer change {0}: the reference moves between planes {1}, ground via at {2:.1f} mm",
+    "Area di massa di circa {0:.0f} mm2 su {1}: il punto piu' lontano e' a {2:.1f} mm dalla via di massa piu' vicina (massimo {3:.1f} mm con passo {4:g} mm)":
+        "Ground area of about {0:.0f} mm2 on {1}: its farthest point is {2:.1f} mm from the nearest ground via (at most {3:.1f} mm with a {4:g} mm spacing)",
+    "Area di massa di circa {0:.0f} mm2 su {1} senza alcuna via di stitching":
+        "Ground area of about {0:.0f} mm2 on {1} without any stitching via",
+    "{0} interrotto su {1} sotto la traccia su {2} ({3})": "{0} interrupted on {1} under the track on {2} ({3})",
+    "via di stitching vicina": "stitching via nearby",
+    "nessuna via di stitching vicina": "no stitching via nearby",
+
+    "Distingui le isole di rame": "Distinguish copper islands",
+    "Una via di massa conta solo per il pezzo di rame che tocca davvero (non per quello oltre una fessura)":
+        "A ground via counts only for the piece of copper it really touches (not for the one across a slot)",
+    "I condensatori fra {0} e massa vanno verso {1}, non verso la massa dell'integrato ({2})":
+        "The capacitors between {0} and ground go to {1}, not to the IC's ground ({2})",
+    "Cambio layer {0}: il riferimento passa fra masse diverse ({1}); nessuna via puo' collegarle, serve un condensatore o un collegamento fra le masse vicino alla via":
+        "Layer change {0}: the reference moves between different grounds ({1}); no via can join them, a capacitor or a link between the grounds is needed near the via",
+    "Isole di rame non leggibili in questa versione di KiCad: controlli fatti senza distinguere le isole.":
+        "Copper islands not readable in this KiCad version: checks done without distinguishing the islands.",
+
+    "{0} errori e {1} avvisi. Sulla scheda: un cerchio per ogni problema e una forma piena per ogni area senza via di stitching (User.1 = errori, User.2 = avvisi).":
+        "{0} errors and {1} warnings. On the board: a circle for every problem and a filled shape for every area without stitching vias (User.1 = errors, User.2 = warnings).",
+
+    "Valori predefiniti": "Defaults",
+    "Rimette soglie e caselle ai valori predefiniti": "Puts thresholds and check boxes back to their default values",
+    "Valori predefiniti ripristinati.": "Default values restored.",
+
+    # --- Layout checks 5-8: plane edge, track width, isolation, lengths ---
+    "Bordo del piano": "Plane edge",
+    "Larghezza tracce": "Track width",
+    "Isolamento": "Isolation",
+    "Lunghezze": "Lengths",
+    "Tracce troppo vicine al bordo del loro piano di riferimento (in multipli dello spessore del dielettrico h)":
+        "Tracks too close to the edge of their reference plane (in multiples of the dielectric height h)",
+    "Larghezza delle tracce rispetto alla corrente indicata nel campo Correnti (IPC-2221)":
+        "Track width against the current given in the Currents field (IPC-2221)",
+    "Distanza fra net con tensioni diverse oltre 30 V (IPC-2221)":
+        "Distance between nets whose voltages differ by more than 30 V (IPC-2221)",
+    "Differenza di lunghezza nelle coppie differenziali e nei gruppi di net":
+        "Length difference in the differential pairs and in the groups of nets",
+    "Bordo del piano: almeno (multipli di h):": "Plane edge: at least (multiples of h):",
+    "Riscaldamento massimo tracce (C):": "Maximum track temperature rise (C):",
+    "Skew massimo coppie differenziali (mm):": "Maximum differential pair skew (mm):",
+    "Differenza massima nei gruppi (mm):": "Maximum difference in the groups (mm):",
+    "Dati delle net": "Net data",
+    "Correnti (A):": "Currents (A):",
+    "Tensioni (V):": "Voltages (V):",
+    "Gruppi di lunghezza:": "Length groups:",
+    "Corrente (A) delle net da controllare, separate da ';'. Ammessi * e ? nel nome.":
+        "Current (A) of the nets to check, separated by ';'. * and ? are allowed in the name.",
+    "Tensione (V) delle net; senza indicazione e' quella scritta nel nome (+5V, 24V_IN, 3V3), 0 V per le masse.":
+        "Voltage (V) of the nets; if not given it is the one written in the name (+5V, 24V_IN, 3V3), 0 V for the grounds.",
+    "Gruppi di net da tenere della stessa lunghezza: un gruppo per ';', nomi separati da ','. Le coppie differenziali sono riconosciute da sole.":
+        "Groups of nets to keep the same length: one group per ';', names separated by ','. Differential pairs are recognized automatically.",
+    "Traccia su {0}: il rame di {1} su {2} finisce a {3:.2f} mm dal bordo della traccia, per circa {4:.0f} mm (limite {5:g} h, h = {6:.2f} mm)":
+        "Track on {0}: the {1} copper on {2} ends {3:.2f} mm from the edge of the track, for about {4:.0f} mm (limit {5:g} h, h = {6:.2f} mm)",
+    "Correnti non comprese: {0}": "Currents not understood: {0}",
+    "Larghezza tracce: nessuna corrente indicata nel campo Correnti.":
+        "Track width: no current given in the Currents field.",
+    "{0}: larghezza {1:.2f} mm con {2:g} A, riscaldamento stimato {3} C (massimo {4:g} C); servono {5:.2f} mm (IPC-2221, rame {6:.0f} um, {7} tratti)":
+        "{0}: width {1:.2f} mm with {2:g} A, estimated rise {3} C (maximum {4:g} C); {5:.2f} mm needed (IPC-2221, copper {6:.0f} um, {7} segments)",
+    "Correnti: nessuna traccia per {0}": "Currents: no track for {0}",
+    "Tensioni non comprese: {0}": "Voltages not understood: {0}",
+    "Isolamento: nessuna net oltre {0:g} V (tensioni dai nomi delle net o dal campo Tensioni).":
+        "Isolation: no net above {0:g} V (voltages from the net names or from the Voltages field).",
+    "{0} ({1:g} V) e {2} ({3:g} V) su {4}: distanza {5:.2f} mm, IPC-2221 {6} chiede {7:g} mm per {8:g} V":
+        "{0} ({1:g} V) and {2} ({3:g} V) on {4}: distance {5:.2f} mm, IPC-2221 {6} asks {7:g} mm for {8:g} V",
+    "Isolamento: tensione non nota per {0}{1}, vicine a net oltre {2:g} V: indicala nel campo Tensioni per controllarle.":
+        "Isolation: unknown voltage for {0}{1}, close to nets above {2:g} V: type it in the Voltages field to check them.",
+    "Coppia differenziale: {0} {1:.2f} mm, {2} {3:.2f} mm, differenza {4:.2f} mm (allunga {5})":
+        "Differential pair: {0} {1:.2f} mm, {2} {3:.2f} mm, difference {4:.2f} mm (lengthen {5})",
+    "Gruppo \"{0}\": meno di due net con tracce.": "Group \"{0}\": fewer than two nets with tracks.",
+    "Gruppo \"{0}\": {1} {2:.2f} mm, {3:.2f} mm piu' corta di {4} ({5:.2f} mm)":
+        "Group \"{0}\": {1} {2:.2f} mm, {3:.2f} mm shorter than {4} ({5:.2f} mm)",
+
+    # --- Layout checks 9-16 ---
+    "Misura": "Measured",
+    "Limite": "Limit",
+    "Rami morti": "Dead branches",
+    "Angoli acuti": "Acute angles",
+    "Cambi di larghezza": "Width steps",
+    "Via nei pad": "Vias in pads",
+    "Tombstoning": "Tombstoning",
+    "Corrente via": "Via current",
+    "Quarzo": "Crystal",
+    "Tracce sovrapposte": "Overlapping tracks",
+    "Tracce che finiscono senza collegarsi a niente": "Tracks ending without connecting to anything",
+    "Tracce della stessa net che si incontrano a meno di 90 gradi (acid trap)":
+        "Tracks of the same net meeting at less than 90 degrees (acid trap)",
+    "Net di segnale con tracce di larghezza diversa (salto di impedenza)":
+        "Signal nets with tracks of different widths (impedance step)",
+    "Foro di una via dentro un pad SMD (lo stagno scende nel foro)":
+        "Drill of a via inside an SMD pad (the solder flows into the hole)",
+    "Componenti piccoli con un pad annegato nella zona e l'altro su traccia":
+        "Small parts with one pad flooded in the zone and the other on a track",
+    "Numero di via a ogni cambio di layer per le net del campo Correnti (IPC-2221)":
+        "Number of vias at every layer change for the nets of the Currents field (IPC-2221)",
+    "Tracce sotto il quarzo e lunghezza delle tracce quarzo-integrato":
+        "Tracks under the crystal and length of the crystal-IC tracks",
+    "Tracce di net diverse una sopra l'altra su layer adiacenti":
+        "Tracks of different nets one over the other on adjacent layers",
+    "Rami morti da (mm):": "Dead branches from (mm):",
+    "Angoli acuti sotto (gradi):": "Acute angles below (degrees):",
+    "Cambio di larghezza oltre (%):": "Width step above (%):",
+    "Tracce quarzo-integrato fino a (mm):": "Crystal-IC tracks up to (mm):",
+    "Tracce sovrapposte da (mm):": "Overlapping tracks from (mm):",
+    "Traccia su {0} che finisce senza collegarsi a niente: ramo morto di {1:.1f} mm (antenna, e uno stub sulle linee veloci)":
+        "Track on {0} ending without connecting to anything: dead branch of {1:.1f} mm (an antenna, and a stub on fast lines)",
+    "Due tratti su {0} si incontrano a {1:.0f} gradi: angolo acuto (acid trap), meglio 90 gradi o piu' (due tratti a 45 gradi)":
+        "Two segments on {0} meet at {1:.0f} degrees: acute angle (acid trap), better 90 degrees or more (two 45 degree segments)",
+    "Larghezze diverse su {0}: {1} (larghezza e lunghezza): ogni cambio e' un salto di impedenza":
+        "Different widths on {0}: {1} (width and length): every change is an impedance step",
+    "Foro della via ({0:.2f} mm) dentro il pad {1} (SMD): in saldatura lo stagno scende nel foro; spostala fuori dal pad o chiedi via-in-pad riempite e chiuse":
+        "Via drill ({0:.2f} mm) inside pad {1} (SMD): in reflow the solder flows into the hole; move it out of the pad or order filled and capped via-in-pad",
+    "{0}: il pad {1} e' annegato nella zona {2} (collegamento pieno), il pad {3} no: in saldatura si scaldano in modo diverso (tombstoning). Usa lo scarico termico sul pad {1}":
+        "{0}: pad {1} is flooded in the {2} zone (solid connection), pad {3} is not: in reflow they heat up differently (tombstoning). Use a thermal relief on pad {1}",
+    "{0} via da {1:.2f} mm portano {2:g} A: {3:.2f} A ciascuna, riscaldamento stimato {4} C; ne servono {5} per {6:g} C (IPC-2221, placcatura {7:g} um)":
+        "{0} vias of {1:.2f} mm carry {2:g} A: {3:.2f} A each, estimated rise {4} C; {5} are needed for {6:g} C (IPC-2221, plating {7:g} um)",
+    "La traccia di {0} passa sotto il quarzo {1} ({2}): porta disturbi nell'oscillatore, spostala":
+        "The track of {0} runs under crystal {1} ({2}): it brings noise into the oscillator, move it",
+    "{0}: {1:.1f} mm di tracce fra il quarzo {2} e l'integrato (condensatori di carico compresi): avvicina il quarzo al chip":
+        "{0}: {1:.1f} mm of tracks between crystal {2} and the IC (load capacitors included): move the crystal closer to the chip",
+    "{0} su {1} corre sopra {2} su {3} per {4:.1f} mm: senza un piano in mezzo si accoppiano (crosstalk)":
+        "{0} on {1} runs over {2} on {3} for {4:.1f} mm: with no plane between them they couple (crosstalk)",
+
+    # --- Exclusions, project file, report ---
+    "Pagina HTML con i risultati e i disegni dei punti segnalati, accanto alla scheda (dal browser: Stampa -> Salva come PDF)":
+        "HTML page with the results and drawings of the reported points, next to the board (from the browser: Print -> Save as PDF)",
+    "_controlli_layout": "_layout_checks",
+    "Rapporto...": "Report...",
+    "Rapporto": "Report",
+    "Salva il rapporto": "Save the report",
+    "Rapporto salvato: {0}": "Report saved: {0}",
+    "Includi di nuovo": "Include again",
+    "Escludi (accettato)": "Exclude (accepted)",
+    "Includi di nuovo tutte le righe escluse": "Include again all the excluded rows",
+    "La scheda non e' ancora salvata: l'esclusione vale solo fino alla chiusura della finestra.":
+        "The board is not saved yet: the exclusion lasts only until the window is closed.",
+    "{0} righe escluse (in grigio): clic destro per includerle di nuovo.":
+        "{0} excluded rows (grey): right click to include them again.",
+    "(scheda non salvata)": "(board not saved)",
+    "Net di massa": "Ground net",
+    "Condensatore: attenzione / errore oltre": "Capacitor: warning / error beyond",
+    "Via di massa dei pad GND entro": "Ground via of GND pads within",
+    "Via di ritorno al cambio layer entro": "Return via at layer change within",
+    "Passo massimo via di stitching": "Maximum stitching via spacing",
+    "Gap minimo del piano": "Minimum plane gap",
+    "Bordo del piano: almeno": "Plane edge: at least",
+    "Riscaldamento massimo tracce": "Maximum track temperature rise",
+    "Skew massimo coppie / differenza nei gruppi": "Maximum pair skew / difference in the groups",
+    "Rami morti da": "Dead branches from",
+    "Angoli acuti sotto": "Acute angles below",
+    "Cambio di larghezza oltre": "Width step above",
+    "Tracce quarzo-integrato fino a": "Crystal-IC tracks up to",
+    "Tracce sovrapposte da": "Overlapping tracks from",
+    "Correnti": "Currents",
+    "Tensioni": "Voltages",
+    "Gruppi di lunghezza": "Length groups",
+    "Escluso": "Excluded",
+    "errori": "errors",
+    "avvisi": "warnings",
+    "righe escluse": "excluded rows",
+    "Riepilogo": "Summary",
+    "Errori": "Errors",
+    "Avvisi": "Warnings",
+    "Escluse": "Excluded",
+    "Soglie e dati usati": "Thresholds and data used",
+    "Scheda": "Board",
+    "Rosso = errore, giallo = avviso; il numero rimanda alla scheda del problema qui sotto. Tracce: rosso F.Cu, blu B.Cu.":
+        "Red = error, yellow = warning; the number refers to the card of the problem below. Tracks: red F.Cu, blue B.Cu.",
+    "Posizione": "Position",
+    "Problemi": "Problems",
+    "Righe escluse (accettate)": "Excluded rows (accepted)",
+    "non eseguito": "not run",
+    "Note": "Notes",
+    "Nessuno": "None",
+    "Seleziona tutti i controlli": "Select all the checks",
+    "Deseleziona tutti i controlli": "Clear all the checks",
+    # Name of the openEMS run folder: the same in both languages
+    "sim_{0}": "sim_{0}",
 }

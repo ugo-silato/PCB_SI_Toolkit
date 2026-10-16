@@ -396,6 +396,7 @@ def highlight_issues(board, issues, severe_layer=pcbnew.User_1,
             marker.SetEnd(pcbnew.VECTOR2I(point.x + marker_radius_nm, point.y))
             marker.SetWidth(0)
             board.Add(marker)
+            register_marker(marker)
             created_markers.append(marker)
 
     pcbnew.Refresh()
@@ -408,8 +409,68 @@ def highlight_issues(board, issues, severe_layer=pcbnew.User_1,
     return created_markers
 
 
+# UUIDs of the markers drawn by the plugin, by Python object: the markers
+# are removed by UUID (see clear_highlight), never through an old Python
+# reference that may point to an object the user deleted in the meantime
+_MARKER_UUIDS = {}
+
+
+def _uuid(item):
+    """UUID of a board item as a string (None if not available)."""
+    try:
+        return item.m_Uuid.AsString()
+    except Exception:
+        try:
+            return item.GetUuid().AsString()
+        except Exception:
+            return None
+
+
+def register_marker(marker):
+    """Remembers the UUID of a marker just added to the board."""
+    _MARKER_UUIDS[id(marker)] = _uuid(marker)
+
+
+# Markers removed from the board, kept alive for the whole session.
+# Outside an action plugin run, BOARD.Remove gives the C++ object to Python
+# (thisown = 1): as soon as the last Python reference disappears the object
+# is DELETED, while Pcbnew's view still lists it until the next redraw ->
+# the next paint or view rebuild touches freed memory and KiCad crashes.
+# Keeping a reference here means the objects are never freed (a few hundred
+# bytes each), which is always safe.
+_REMOVED = []
+
+
 def clear_highlight(board, markers):
-    """Removes from the board all the markers created by highlight_issues."""
-    for marker in markers:
-        board.Remove(marker)
+    """
+    Removes from the board the markers created by the plugin.
+
+    The markers are looked up among the CURRENT drawings of the board by their
+    UUID: if the user moved, deleted or undid a marker in Pcbnew, the old
+    Python reference may point to freed memory and using it would crash
+    KiCad. Before removal each marker is deselected, and after removal the
+    object is kept alive (see _REMOVED) so the view can never use a deleted
+    object.
+    """
+    wanted = {_MARKER_UUIDS.pop(id(m), None) for m in markers}
+    wanted.discard(None)
+    if wanted:
+        for d in list(board.GetDrawings()):
+            if _uuid(d) not in wanted:
+                continue
+            try:
+                d.ClearSelected()
+                d.ClearBrightened()
+            except Exception:
+                pass
+            board.Remove(d)
+            # Never freed, not even when KiCad closes: see the note above
+            try:
+                d.thisown = 0
+            except Exception:
+                pass
+            _REMOVED.append(d)
+    # The markers given by the caller stay referenced too (their Python
+    # objects wrap the same C++ objects)
+    _REMOVED.extend(markers)
     pcbnew.Refresh()

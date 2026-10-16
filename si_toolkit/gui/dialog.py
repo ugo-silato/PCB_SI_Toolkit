@@ -1,7 +1,7 @@
 """
 Main plugin dialog: a window with a Notebook (tabs), one per analysis
-module (Return Path, DC Current, Impedance, Diff. pairs, Crosstalk,
-openEMS), plus the Options and Help tabs.
+module (Layout checks, Return Path, DC Current, Impedance, Diff. pairs,
+Crosstalk, openEMS), plus the Options and Help tabs.
 
 The UI texts are written in Italian and translated at runtime with _()
 (see common/i18n.py and common/i18n_en.py).
@@ -13,8 +13,14 @@ import pcbnew
 import wx
 import wx.html  # HTML pages (Help, Check openEMS)
 
-from ..analysis import (crosstalk, dc_current, impedance, net_path, openems_check, openems_export,
-                        return_map, return_path)
+# All the analysis modules are imported HERE, at load time: KiCad's
+# "Refresh plugins" reloads only the modules imported when the plugin is
+# loaded, so a module imported later inside a function would stay in memory
+# in its old version after an update.
+from ..common import project_data
+from ..common.version import VERSION
+from ..analysis import (crosstalk, dc_current, impedance, layout_check, net_path, openems_check,
+                        openems_export, return_map, return_path)
 from ..common import geometry
 from ..common import i18n
 from ..common.settings_path import settings_path
@@ -133,11 +139,11 @@ def default_runs_dir():
 
 def make_light_images():
     """
-    List of traffic-light icons (0 green, 1 yellow, 2 red) for the "Status"
-    columns. Drawn with wx, no external files.
+    List of traffic-light icons (0 green, 1 yellow, 2 red, 3 grey = excluded
+    row) for the "Status" columns. Drawn with wx, no external files.
     """
     images = wx.ImageList(14, 14)
-    for colour in ((60, 180, 75), (245, 190, 30), (220, 50, 47)):
+    for colour in ((60, 180, 75), (245, 190, 30), (220, 50, 47), (190, 190, 190)):
         bmp = wx.Bitmap(14, 14)
         dc = wx.MemoryDC(bmp)
         dc.SetBackground(wx.Brush(wx.WHITE))
@@ -159,7 +165,8 @@ class SIToolkitDialog(wx.Dialog):
         i18n.set_language(load_settings().get("lang", "en"))  # default: English
         super().__init__(
             parent,
-            title=_("PCB Signal Integrity Toolkit"),
+            # Name and version in the title bar (version from common/version.py)
+            title=f"{_('PCB Signal Integrity Toolkit')} {VERSION}",
             size=(860, 520),
             style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER,
         )
@@ -172,6 +179,8 @@ class SIToolkitDialog(wx.Dialog):
         # The Options tab is created FIRST (the other tabs use its controls)
         # but shown at the end, before Help
         self.options = OptionsPanel(notebook, self)
+        # Layout checks first: the whole-board overview, then the detailed tabs
+        notebook.AddPage(LayoutCheckPanel(notebook, self), _("Controlli layout"))
         notebook.AddPage(ReturnPathPanel(notebook, self), _("Return Path"))
         notebook.AddPage(DcCurrentPanel(notebook, self), _("Corrente DC"))
         notebook.AddPage(ImpedancePanel(notebook, self), _("Impedenza"))
@@ -1766,6 +1775,666 @@ class OpenEMSPanel(wx.Panel):
             os.startfile(path)
         else:
             self.status_label.SetLabel(_("Nessuna simulazione ancora eseguita."))
+
+
+class LayoutCheckPanel(wx.Panel):
+    """
+    "Layout checks" tab: a "smart DRC" on the whole board (see
+    analysis/layout_check.py). The checks measure the layout (distances,
+    presence of vias and planes) and compare it with good-practice
+    thresholds; every row of the table is a problem, with the measure found
+    and the limit.
+    """
+
+    COLS = (("Stato", 100), ("Controllo", 145), ("Oggetto", 130), ("Dettaglio", 400),
+            ("Misura", 85), ("Limite", 85))
+
+    def __init__(self, parent, dialog):
+        super().__init__(parent)
+        self.dialog = dialog
+        self.board = dialog.board
+        self._cancel_requested = False
+        self._issues = []   # issues of the last run, same order as the rows
+        self._rings = {}    # row index -> ring marker drawn on the board
+
+        # --- Which checks to run (two rows of four) ---
+        checks_box = wx.StaticBoxSizer(wx.VERTICAL, self, _("Controlli"))
+        checks_grid = wx.GridSizer(cols=4, vgap=2, hgap=10)
+        self.decap_check = wx.CheckBox(self, label=_("Disaccoppiamento"))
+        self.decap_check.SetToolTip(_("Condensatore vicino a ogni pin di alimentazione degli integrati "
+                                      "e via di massa vicina ai pad GND"))
+        self.layer_check = wx.CheckBox(self, label=_("Cambio layer"))
+        self.layer_check.SetToolTip(_("Via di segnale dove cambia il piano di riferimento: "
+                                      "serve una via di massa vicina"))
+        self.stitch_check = wx.CheckBox(self, label=_("Via di stitching"))
+        self.stitch_check.SetToolTip(_("Zone di massa su piu' layer: aree troppo lontane da una via di massa"))
+        self.gap_check = wx.CheckBox(self, label=_("Piano interrotto"))
+        self.gap_check.SetToolTip(_("Tracce che passano sopra un'interruzione del piano di massa"))
+        self.edge_check = wx.CheckBox(self, label=_("Bordo del piano"))
+        self.edge_check.SetToolTip(_("Tracce troppo vicine al bordo del loro piano di riferimento "
+                                     "(in multipli dello spessore del dielettrico h)"))
+        self.width_check = wx.CheckBox(self, label=_("Larghezza tracce"))
+        self.width_check.SetToolTip(_("Larghezza delle tracce rispetto alla corrente indicata nel campo "
+                                      "Correnti (IPC-2221)"))
+        self.iso_check = wx.CheckBox(self, label=_("Isolamento"))
+        self.iso_check.SetToolTip(_("Distanza fra net con tensioni diverse oltre 30 V (IPC-2221)"))
+        self.length_check = wx.CheckBox(self, label=_("Lunghezze"))
+        self.length_check.SetToolTip(_("Differenza di lunghezza nelle coppie differenziali e nei gruppi di net"))
+        # Checks 9-16
+        def check_box(label, tip):
+            cb = wx.CheckBox(self, label=label)
+            cb.SetToolTip(tip)
+            return cb
+
+        self.stub_check = check_box(_("Rami morti"), _("Tracce che finiscono senza collegarsi a niente"))
+        self.acute_check = check_box(_("Angoli acuti"), _("Tracce della stessa net che si incontrano a meno di "
+                                                         "90 gradi (acid trap)"))
+        self.wstep_check = check_box(_("Cambi di larghezza"), _("Net di segnale con tracce di larghezza diversa "
+                                                               "(salto di impedenza)"))
+        self.vip_check = check_box(_("Via nei pad"), _("Foro di una via dentro un pad SMD (lo stagno scende nel foro)"))
+        self.tomb_check = check_box(_("Tombstoning"), _("Componenti piccoli con un pad annegato nella zona e "
+                                                        "l'altro su traccia"))
+        self.viacur_check = check_box(_("Corrente via"), _("Numero di via a ogni cambio di layer per le net del "
+                                                          "campo Correnti (IPC-2221)"))
+        self.xtal_check = check_box(_("Quarzo"), _("Tracce sotto il quarzo e lunghezza delle tracce "
+                                                  "quarzo-integrato"))
+        self.broad_check = check_box(_("Tracce sovrapposte"), _("Tracce di net diverse una sopra l'altra su layer "
+                                                               "adiacenti"))
+        # Every check box gets the "_check" suffix: persist_all saves them
+        self._check_boxes = (self.decap_check, self.layer_check, self.stitch_check, self.gap_check,
+                             self.edge_check, self.width_check, self.iso_check, self.length_check,
+                             self.stub_check, self.acute_check, self.wstep_check, self.vip_check,
+                             self.tomb_check, self.viacur_check, self.xtal_check, self.broad_check)
+        for cb in self._check_boxes:
+            cb.SetValue(True)
+            checks_grid.Add(cb, 0)
+        checks_box.Add(checks_grid, 0, wx.ALL, 5)
+        # "All" / "None": select or clear every check at once
+        sel_row = wx.BoxSizer(wx.HORIZONTAL)
+        all_btn = wx.Button(self, label=_("Tutti"), style=wx.BU_EXACTFIT)
+        all_btn.SetToolTip(_("Seleziona tutti i controlli"))
+        all_btn.Bind(wx.EVT_BUTTON, lambda e: self._set_all_checks(True))
+        none_btn = wx.Button(self, label=_("Nessuno"), style=wx.BU_EXACTFIT)
+        none_btn.SetToolTip(_("Deseleziona tutti i controlli"))
+        none_btn.Bind(wx.EVT_BUTTON, lambda e: self._set_all_checks(False))
+        sel_row.Add(all_btn, 0, wx.RIGHT, 6)
+        sel_row.Add(none_btn, 0)
+        checks_box.Add(sel_row, 0, wx.LEFT | wx.BOTTOM, 5)
+
+        # --- Thresholds (two label/box pairs per row) ---
+        def num_box(value):
+            return wx.TextCtrl(self, value=value, size=(50, -1))
+
+        # Default values: the ones of layout_check.CheckSettings (single source)
+        d = layout_check.CheckSettings()
+        self._defaults = {
+            "decap_warn_ctrl": d.decap_warn_mm, "decap_err_ctrl": d.decap_err_mm,
+            "gnd_via_ctrl": d.gnd_via_mm, "return_via_ctrl": d.return_via_mm,
+            "stitch_ctrl": d.stitch_spacing_mm, "min_gap_ctrl": d.min_gap_mm,
+            "edge_h_ctrl": d.edge_h_factor, "dt_ctrl": d.delta_t,
+            "skew_ctrl": d.skew_mm, "group_tol_ctrl": d.group_tol_mm,
+            "stub_ctrl": d.stub_mm, "acute_ctrl": d.acute_deg, "wstep_ctrl": d.width_step_pct,
+            "xtal_ctrl": d.crystal_mm, "broad_ctrl": d.broadside_mm,
+        }
+        self.decap_warn_ctrl = num_box(f"{d.decap_warn_mm:g}")
+        self.decap_err_ctrl = num_box(f"{d.decap_err_mm:g}")
+        self.gnd_via_ctrl = num_box(f"{d.gnd_via_mm:g}")
+        self.return_via_ctrl = num_box(f"{d.return_via_mm:g}")
+        self.stitch_ctrl = num_box(f"{d.stitch_spacing_mm:g}")
+        self.min_gap_ctrl = num_box(f"{d.min_gap_mm:g}")
+        self.edge_h_ctrl = num_box(f"{d.edge_h_factor:g}")
+        self.dt_ctrl = num_box(f"{d.delta_t:g}")
+        self.skew_ctrl = num_box(f"{d.skew_mm:g}")
+        self.group_tol_ctrl = num_box(f"{d.group_tol_mm:g}")
+        self.stub_ctrl = num_box(f"{d.stub_mm:g}")
+        self.acute_ctrl = num_box(f"{d.acute_deg:g}")
+        self.wstep_ctrl = num_box(f"{d.width_step_pct:g}")
+        self.xtal_ctrl = num_box(f"{d.crystal_mm:g}")
+        self.broad_ctrl = num_box(f"{d.broadside_mm:g}")
+        self.skip_power_check = wx.CheckBox(self, label=_("Cambio layer e bordo: ignora le net di alimentazione"))
+        self.skip_power_check.SetValue(True)
+        # Copper islands: a via counts only for the piece of ground copper it
+        # really touches (reads the filled polygons of the zones)
+        self.islands_check = wx.CheckBox(self, label=_("Distingui le isole di rame"))
+        self.islands_check.SetToolTip(_("Una via di massa conta solo per il pezzo di rame che tocca davvero "
+                                        "(non per quello oltre una fessura)"))
+        self.islands_check.SetValue(True)
+
+        thr_box = wx.StaticBoxSizer(wx.VERTICAL, self, _("Soglie"))
+        grid = wx.FlexGridSizer(cols=6, vgap=4, hgap=6)
+        rows = (
+            ("Condensatore: attenzione oltre (mm):", self.decap_warn_ctrl,
+             "Condensatore: errore oltre (mm):", self.decap_err_ctrl),
+            ("Via di massa dei pad GND entro (mm):", self.gnd_via_ctrl,
+             "Via di ritorno al cambio layer entro (mm):", self.return_via_ctrl),
+            ("Passo massimo via di stitching (mm):", self.stitch_ctrl,
+             "Gap minimo del piano (mm):", self.min_gap_ctrl),
+            ("Bordo del piano: almeno (multipli di h):", self.edge_h_ctrl,
+             "Riscaldamento massimo tracce (C):", self.dt_ctrl),
+            ("Skew massimo coppie differenziali (mm):", self.skew_ctrl,
+             "Differenza massima nei gruppi (mm):", self.group_tol_ctrl),
+            ("Rami morti da (mm):", self.stub_ctrl,
+             "Angoli acuti sotto (gradi):", self.acute_ctrl),
+            ("Cambio di larghezza oltre (%):", self.wstep_ctrl,
+             "Tracce quarzo-integrato fino a (mm):", self.xtal_ctrl),
+            ("Tracce sovrapposte da (mm):", self.broad_ctrl,
+             None, None),
+        )
+        # The (label, box) pairs, laid out three per row: the tab must leave
+        # room to the results table
+        pairs = [(l, c) for l1, c1, l2, c2 in rows for l, c in ((l1, c1), (l2, c2)) if l is not None]
+        for k, (label, ctrl) in enumerate(pairs):
+            grid.Add(wx.StaticText(self, label=_(label)), 0, wx.ALIGN_CENTER_VERTICAL)
+            # Space after the box, except at the end of the row
+            grid.Add(ctrl, 0, wx.RIGHT, 0 if k % 3 == 2 else 14)
+        thr_box.Add(grid, 0, wx.ALL, 5)
+        opt_row = wx.BoxSizer(wx.HORIZONTAL)
+        opt_row.Add(self.skip_power_check, 0, wx.RIGHT, 20)
+        opt_row.Add(self.islands_check, 0)
+        thr_box.Add(opt_row, 0, wx.LEFT | wx.BOTTOM, 5)
+
+        # --- Net data typed by the user (checks 6-8): "net = value; ..." ---
+        def data_box(hint, tip):
+            ctrl = wx.TextCtrl(self, value="", size=(300, -1))
+            ctrl.SetHint(hint)
+            ctrl.SetToolTip(tip)
+            return ctrl
+
+        self.currents_ctrl = data_box(
+            "+5V=2; VIN=3",
+            _("Corrente (A) delle net da controllare, separate da ';'. Ammessi * e ? nel nome."))
+        self.voltages_ctrl = data_box(
+            "HV*=400; L=325",
+            _("Tensione (V) delle net; senza indicazione e' quella scritta nel nome (+5V, 24V_IN, 3V3), "
+              "0 V per le masse."))
+        self.groups_ctrl = data_box(
+            "SD_*; ETH_TX*, ETH_CLK",
+            _("Gruppi di net da tenere della stessa lunghezza: un gruppo per ';', nomi separati da ','. "
+              "Le coppie differenziali sono riconosciute da sole."))
+        data_sizer = wx.StaticBoxSizer(wx.VERTICAL, self, _("Dati delle net"))
+        data_grid = wx.FlexGridSizer(cols=2, vgap=4, hgap=6)
+        for label, ctrl in ((_("Correnti (A):"), self.currents_ctrl),
+                            (_("Tensioni (V):"), self.voltages_ctrl),
+                            (_("Gruppi di lunghezza:"), self.groups_ctrl)):
+            data_grid.Add(wx.StaticText(self, label=label), 0, wx.ALIGN_CENTER_VERTICAL)
+            data_grid.Add(ctrl, 1, wx.EXPAND)
+        data_grid.AddGrowableCol(1, 1)
+        data_sizer.Add(data_grid, 1, wx.EXPAND | wx.ALL, 5)
+
+        # Thresholds and net data side by side
+        top_row = wx.BoxSizer(wx.HORIZONTAL)
+        top_row.Add(checks_box, 0, wx.EXPAND | wx.RIGHT, 10)
+        top_row.Add(data_sizer, 1, wx.EXPAND)
+
+        # --- Buttons ---
+        btn_row = wx.BoxSizer(wx.HORIZONTAL)
+        self.run_btn = wx.Button(self, label=_("Esegui controlli"))
+        self.run_btn.SetToolTip(_("Controlla tutta la scheda (le zone devono essere riempite: tasto B)"))
+        self.run_btn.Bind(wx.EVT_BUTTON, self.on_run)
+        btn_row.Add(self.run_btn, 0, wx.RIGHT, 5)
+        self.cancel_btn = wx.Button(self, label=_("Interrompi"))
+        self.cancel_btn.Bind(wx.EVT_BUTTON, self.on_cancel)
+        self.cancel_btn.Disable()
+        btn_row.Add(self.cancel_btn, 0, wx.RIGHT, 10)
+        clear_btn = wx.Button(self, label=_("Pulisci overlay"))
+        clear_btn.Bind(wx.EVT_BUTTON, self.on_clear)
+        btn_row.Add(clear_btn, 0, wx.RIGHT, 10)
+        # Filter of the table: all the rows or only the errors
+        self.show_choice = wx.Choice(self, choices=[_("Tutti"), _("Solo errori")])
+        self.show_choice.SetSelection(0)
+        self.show_choice.Bind(wx.EVT_CHOICE, lambda e: self._fill_list())
+        btn_row.Add(wx.StaticText(self, label=_("Mostra:")), 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 4)
+        btn_row.Add(self.show_choice, 0)
+        # HTML report of the last run (disabled until the checks have run)
+        self.report_btn = wx.Button(self, label=_("Rapporto..."))
+        self.report_btn.SetToolTip(_("Pagina HTML con i risultati e i disegni dei punti segnalati, accanto "
+                                     "alla scheda (dal browser: Stampa -> Salva come PDF)"))
+        self.report_btn.Bind(wx.EVT_BUTTON, self.on_report)
+        self.report_btn.Disable()
+        btn_row.Add(self.report_btn, 0, wx.LEFT, 10)
+        # Back to the default thresholds and switches
+        reset_btn = wx.Button(self, label=_("Valori predefiniti"))
+        reset_btn.SetToolTip(_("Rimette soglie e caselle ai valori predefiniti"))
+        reset_btn.Bind(wx.EVT_BUTTON, self.on_reset_defaults)
+        btn_row.Add(reset_btn, 0, wx.LEFT, 10)
+        add_help_button(self, btn_row, "layout_check")
+
+        # --- Results table ---
+        self.results_list = wx.ListCtrl(self, style=wx.LC_REPORT | wx.LC_SINGLE_SEL, size=(400, 150))
+        for k, (title, width) in enumerate(self.COLS):
+            self.results_list.InsertColumn(k, _(title), width=width)
+        self._light_images = make_light_images()
+        self.results_list.SetImageList(self._light_images, wx.IMAGE_LIST_SMALL)
+        self.results_list.Bind(wx.EVT_LIST_ITEM_SELECTED, self.on_row_selected)
+        self.results_list.Bind(wx.EVT_LIST_ITEM_RIGHT_CLICK, self.on_right_click)
+        self._shown = []  # indexes (in self._issues) of the rows shown
+        self._keys = []   # identity of every row (layout_check.issue_key)
+        self._notes = []
+        self._settings_used = None
+        self._excluded = set()
+
+        self.status_label = wx.StaticText(self, label="")
+
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        sizer.Add(top_row, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 10)
+        sizer.Add(thr_box, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 10)
+        sizer.Add(btn_row, 0, wx.ALL, 10)
+        sizer.Add(self.results_list, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 10)
+        sizer.Add(self.status_label, 0, wx.ALL, 10)
+        self.SetSizer(sizer)
+        # One-time update of the saved thresholds: the values still equal to
+        # the OLD defaults (never changed by the user) become the new ones
+        self._migrate_defaults()
+        # Remember switches and thresholds between sessions (general settings);
+        # the net data belong to the board: they go in its project file
+        persist_all(self, "lc", skip=("currents_ctrl", "voltages_ctrl", "groups_ctrl"))
+        self._load_project_data()
+
+    # Net data saved in the project file of the board: (key, text box name)
+    _PROJECT_FIELDS = (("lc_currents", "currents_ctrl"), ("lc_voltages", "voltages_ctrl"),
+                       ("lc_groups", "groups_ctrl"))
+
+    def _load_project_data(self):
+        """
+        Net data and excluded rows of THIS board, from its project file (see
+        common/project_data.py). A board without a project file yet takes the
+        net data saved by the previous versions in the general settings, so
+        nothing typed before is lost. Every change is saved at once.
+        """
+        data = project_data.load(self.board)
+        general = load_settings()
+        for key, name in self._PROJECT_FIELDS:
+            ctrl = getattr(self, name)
+            value = data.get(key)
+            if value is None:
+                value = general.get(f"lc_{name}", "")
+            ctrl.ChangeValue(str(value))  # ChangeValue does not generate EVT_TEXT
+            ctrl.Bind(wx.EVT_TEXT, lambda evt, k=key, c=ctrl: (self._save_project(k, c.GetValue()), evt.Skip()))
+        self._excluded = set(data.get("lc_excluded", []))
+
+    def _save_project(self, key, value):
+        """
+        Saves one value in the project file of the board. A board never saved
+        has no project file: the value goes to the general settings instead.
+        """
+        if not project_data.save(self.board, key, value):
+            names = dict(self._PROJECT_FIELDS)
+            if key in names:
+                save_setting(f"lc_{names[key]}", value)
+
+    # Defaults of the first version of the tab: (settings key, old value)
+    _OLD_DEFAULTS = (("lc_decap_warn_ctrl", "5"), ("lc_decap_err_ctrl", "10"),
+                     ("lc_gnd_via_ctrl", "2"))
+
+    def _migrate_defaults(self):
+        """
+        Saved settings are loaded over the defaults, so new defaults would
+        never reach who already used the tab. Once (flag in the settings), the
+        saved values still equal to the old defaults are replaced by the new
+        ones; values changed by the user are kept.
+        """
+        data = load_settings()
+        if data.get("lc_defaults_version", 1) >= 2:
+            return
+        for key, old in self._OLD_DEFAULTS:
+            if str(data.get(key, "")).strip() == old:
+                save_setting(key, f"{self._defaults[key[3:]]:g}")
+        save_setting("lc_defaults_version", 2)
+
+    def _set_all_checks(self, value):
+        """
+        Selects (value True) or clears all the check boxes of the checks and
+        saves them: SetValue does not send the event that would save them.
+        """
+        for cb in self._check_boxes:
+            cb.SetValue(value)
+            for name, obj in vars(self).items():
+                if obj is cb:
+                    save_setting(f"lc_{name}", value)
+
+    def on_reset_defaults(self, event):
+        """Puts back the default thresholds and switches (and saves them)."""
+        for name, value in self._defaults.items():
+            getattr(self, name).SetValue(f"{value:g}")  # SetValue also saves it
+        # The net data (currents, voltages, groups) are the user's data, not
+        # thresholds: they are left as they are
+        for cb in self._check_boxes + (self.skip_power_check, self.islands_check):
+            cb.SetValue(True)
+            # SetValue of a check box does not generate the event that saves it
+            for name, obj in vars(self).items():
+                if obj is cb:
+                    save_setting(f"lc_{name}", True)
+        self.status_label.SetLabel(_("Valori predefiniti ripristinati."))
+
+    @staticmethod
+    def _number(ctrl, default):
+        """Number from a text box (decimal comma accepted), default if invalid."""
+        try:
+            return float(ctrl.GetValue().strip().replace(",", "."))
+        except ValueError:
+            return default
+
+    def _settings(self):
+        """Settings of the analysis from the controls of the tab and of Options."""
+        d = layout_check.CheckSettings()  # defaults, used for invalid values
+        n = self._number
+        return layout_check.CheckSettings(
+            ref_filter=self.dialog.options.gnd_ctrl.GetValue().strip() or "GND",
+            do_decap=self.decap_check.GetValue(),
+            do_layer_change=self.layer_check.GetValue(),
+            do_stitching=self.stitch_check.GetValue(),
+            do_plane_gap=self.gap_check.GetValue(),
+            decap_warn_mm=n(self.decap_warn_ctrl, d.decap_warn_mm),
+            decap_err_mm=n(self.decap_err_ctrl, d.decap_err_mm),
+            gnd_via_mm=n(self.gnd_via_ctrl, d.gnd_via_mm),
+            return_via_mm=n(self.return_via_ctrl, d.return_via_mm),
+            skip_power_nets=self.skip_power_check.GetValue(),
+            stitch_spacing_mm=max(n(self.stitch_ctrl, d.stitch_spacing_mm), 1.0),
+            min_gap_mm=n(self.min_gap_ctrl, d.min_gap_mm),
+            use_islands=self.islands_check.GetValue(),
+            do_plane_edge=self.edge_check.GetValue(),
+            do_width=self.width_check.GetValue(),
+            do_isolation=self.iso_check.GetValue(),
+            do_length=self.length_check.GetValue(),
+            edge_h_factor=max(n(self.edge_h_ctrl, d.edge_h_factor), 0.1),
+            delta_t=max(n(self.dt_ctrl, d.delta_t), 1.0),
+            currents=self.currents_ctrl.GetValue(),
+            voltages=self.voltages_ctrl.GetValue(),
+            skew_mm=max(n(self.skew_ctrl, d.skew_mm), 0.0),
+            group_tol_mm=max(n(self.group_tol_ctrl, d.group_tol_mm), 0.0),
+            groups=self.groups_ctrl.GetValue(),
+            do_stub=self.stub_check.GetValue(),
+            do_acute=self.acute_check.GetValue(),
+            do_width_step=self.wstep_check.GetValue(),
+            do_via_in_pad=self.vip_check.GetValue(),
+            do_tombstone=self.tomb_check.GetValue(),
+            do_via_current=self.viacur_check.GetValue(),
+            do_crystal=self.xtal_check.GetValue(),
+            do_broadside=self.broad_check.GetValue(),
+            stub_mm=max(n(self.stub_ctrl, d.stub_mm), 0.0),
+            acute_deg=min(max(n(self.acute_ctrl, d.acute_deg), 1.0), 179.0),
+            width_step_pct=max(n(self.wstep_ctrl, d.width_step_pct), 0.0),
+            crystal_mm=max(n(self.xtal_ctrl, d.crystal_mm), 0.0),
+            broadside_mm=max(n(self.broad_ctrl, d.broadside_mm), 0.0),
+            # Via plating: the same value used by the DC Current tab (Options)
+            via_plating_um=max(n(self.dialog.options.plating_ctrl, d.via_plating_um), 1.0),
+        )
+
+    def on_run(self, event):
+        """Runs the enabled checks on the whole board and fills the table."""
+        self.on_clear(event)  # old markers off the board first
+        settings = self._settings()
+        self._cancel_requested = False
+        self.run_btn.Disable()
+        self.cancel_btn.Enable()
+        self.status_label.SetLabel(_("Controlli in corso... (0%)"))
+        wx.Yield()
+
+        def on_progress(fraction, name):
+            # Called often by the checks: shows the progress and keeps the
+            # window responsive (a click on "Stop" is processed here)
+            self.status_label.SetLabel(_("Controlli in corso: {0} ({1}%)").format(name, int(100 * fraction)))
+            wx.Yield()
+
+        try:
+            issues, notes = layout_check.run_checks(
+                self.board, settings, progress=on_progress,
+                cancel=lambda: self._cancel_requested)
+        except Exception:
+            import traceback
+
+            self.run_btn.Enable()
+            self.cancel_btn.Disable()
+            self.status_label.SetLabel(_("Errore durante i controlli."))
+            wx.MessageBox(traceback.format_exc(), _("Controlli layout"), wx.OK | wx.ICON_ERROR, self)
+            return
+
+        # The excluded rows (saved for this board) go to the bottom of the list
+        self._excluded = set(project_data.load(self.board).get("lc_excluded", self._excluded))
+        keys = [layout_check.issue_key(it) for it in issues]
+        order = sorted(range(len(issues)), key=lambda k: keys[k] in self._excluded)
+        self._issues = [issues[k] for k in order]
+        self._keys = [keys[k] for k in order]
+        self._notes = notes
+        self._settings_used = settings
+        self.run_btn.Enable()
+        self.cancel_btn.Disable()
+        self.report_btn.Enable()
+        self._show_results()
+
+    def _excluded_rows(self):
+        """Indexes (in self._issues) of the rows excluded by the user."""
+        return {k for k, key in enumerate(self._keys) if key in self._excluded}
+
+    def _show_results(self):
+        """
+        Markers on the board (not for the excluded rows), table and status
+        line, from the last results. Called after a run and after a row is
+        excluded or included again.
+        """
+        if self.dialog.markers:
+            return_path.clear_highlight(self.board, self.dialog.markers)
+            self.dialog.markers = []
+        skip = self._excluded_rows()
+        # Markers on the board: User.1 = errors, User.2 = warnings
+        markers, self._rings = layout_check.highlight(self.board, self._issues, skip=skip)
+        self.dialog.markers = markers
+        self._fill_list()
+
+        active = [it for k, it in enumerate(self._issues) if k not in skip]
+        n_err = sum(1 for it in active if it.severity == layout_check.SEV_ERROR)
+        n_warn = len(active) - n_err
+        if self._cancel_requested:
+            msg = _("Interrotto dall'utente: {0} errori e {1} avvisi trovati prima dello stop.").format(n_err, n_warn)
+        elif not active:
+            msg = _("Nessun problema trovato con le soglie impostate.")
+        else:
+            msg = _("{0} errori e {1} avvisi. Sulla scheda: un cerchio per ogni problema e una forma piena "
+                    "per ogni area senza via di stitching (User.1 = errori, User.2 = avvisi).").format(n_err, n_warn)
+        if skip:
+            msg += "  " + _("{0} righe escluse (in grigio): clic destro per includerle di nuovo.").format(len(skip))
+        if self._notes:
+            msg += "  " + "  ".join(self._notes)
+        self.status_label.SetLabel(msg)
+        self.status_label.Wrap(max(self.GetSize().width - 30, 300))
+        self.Layout()
+
+    def on_report(self, event):
+        """
+        Writes the HTML report of the last run next to the board (asks where
+        if the board has never been saved) and opens it in the browser.
+        """
+        from ..analysis import layout_report
+        from ..common.version import VERSION
+
+        board_file = self.board.GetFileName()
+        suffix = _("_controlli_layout") + ".html"
+        if board_file:
+            path = os.path.splitext(board_file)[0] + suffix
+        else:
+            dlg = wx.FileDialog(self, _("Salva il rapporto"), wildcard="HTML (*.html)|*.html",
+                                defaultFile="layout" + suffix, style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT)
+            if dlg.ShowModal() != wx.ID_OK:
+                dlg.Destroy()
+                return
+            path = dlg.GetPath()
+            dlg.Destroy()
+        try:
+            wx.BeginBusyCursor()
+            layout_report.write_report(path, self.board, self._issues, self._excluded_rows(),
+                                       self._settings_used, self._notes, VERSION)
+        except Exception:
+            import traceback
+
+            wx.MessageBox(traceback.format_exc(), _("Rapporto"), wx.OK | wx.ICON_ERROR, self)
+            return
+        finally:
+            if wx.IsBusy():
+                wx.EndBusyCursor()
+        self.status_label.SetLabel(_("Rapporto salvato: {0}").format(path))
+        import webbrowser
+
+        webbrowser.open("file:///" + path.replace(os.sep, "/").lstrip("/"))
+
+    def on_right_click(self, event):
+        """
+        Right click on a row: menu to exclude it (accepted, it turns grey and
+        leaves the board) or to include it again. The choice is saved in the
+        project file of the board, so it is kept in the next runs.
+        """
+        row = event.GetIndex()
+        if row < 0 or row >= len(self._shown):
+            return
+        k = self._shown[row]
+        key = self._keys[k]
+        menu = wx.Menu()
+        if key in self._excluded:
+            item = menu.Append(wx.ID_ANY, _("Includi di nuovo"))
+            self.Bind(wx.EVT_MENU, lambda e: self._set_excluded(key, False), item)
+        else:
+            item = menu.Append(wx.ID_ANY, _("Escludi (accettato)"))
+            self.Bind(wx.EVT_MENU, lambda e: self._set_excluded(key, True), item)
+        if self._excluded:
+            menu.AppendSeparator()
+            all_item = menu.Append(wx.ID_ANY, _("Includi di nuovo tutte le righe escluse"))
+            self.Bind(wx.EVT_MENU, lambda e: self._set_excluded(None, False), all_item)
+        self.PopupMenu(menu)
+        menu.Destroy()
+
+    def _set_excluded(self, key, excluded):
+        """Excludes / includes a row (key None = include all again) and saves the choice."""
+        if key is None:
+            self._excluded = set()
+        elif excluded:
+            self._excluded.add(key)
+        else:
+            self._excluded.discard(key)
+        if not project_data.save(self.board, "lc_excluded", sorted(self._excluded)):
+            wx.MessageBox(_("La scheda non e' ancora salvata: l'esclusione vale solo fino alla chiusura "
+                            "della finestra."), _("Controlli layout"), wx.OK | wx.ICON_INFORMATION, self)
+        # Excluded rows go to the bottom, included ones back among the others
+        order = sorted(range(len(self._issues)), key=lambda k: self._keys[k] in self._excluded)
+        self._issues = [self._issues[k] for k in order]
+        self._keys = [self._keys[k] for k in order]
+        self._show_results()
+
+    @staticmethod
+    def _value_text(value, unit, limit=False):
+        """
+        Text of a Measured / Limit cell with its unit: "0.13 mm", "45°",
+        "67 %", "2 via". Lengths below 10 mm get two decimals (track widths,
+        clearances); limits are written as typed (:g).
+        """
+        if value is None:
+            return "-"
+        if unit == "via":
+            txt = f"{int(round(value))}"
+        elif unit in ("°", "%"):
+            txt = f"{value:.0f}"
+        elif limit:
+            txt = f"{value:g}"
+        else:
+            txt = f"{value:.2f}" if value < 10 else f"{value:.1f}"
+        if not unit:
+            return txt
+        return f"{txt}{unit}" if unit == "°" else f"{txt} {unit}"
+
+    def _fill_list(self):
+        """Fills the table with the issues, filtered by the 'Show' choice."""
+        names = layout_check.check_names()
+        only_errors = self.show_choice.GetSelection() == 1
+        self.results_list.DeleteAllItems()
+        self._shown = []
+        skip = self._excluded_rows()
+        for k, it in enumerate(self._issues):
+            excluded = k in skip
+            if only_errors and (it.severity != layout_check.SEV_ERROR or excluded):
+                continue
+            # Traffic light: 2 = red (error), 1 = yellow (warning), 3 = grey (excluded)
+            if excluded:
+                word, icon = "Escluso", 3
+            else:
+                word = "Errore" if it.severity == layout_check.SEV_ERROR else "Attenzione"
+                icon = it.severity
+            row = self.results_list.InsertItem(self.results_list.GetItemCount(), _(word), icon)
+            if excluded:
+                # Greyed out, as KiCad does with the excluded DRC markers
+                self.results_list.SetItemTextColour(row, wx.Colour(150, 150, 150))
+            self.results_list.SetItem(row, 1, names.get(it.check, it.check))
+            self.results_list.SetItem(row, 2, it.obj)
+            self.results_list.SetItem(row, 3, it.detail)
+            self.results_list.SetItem(row, 4, self._value_text(it.measured_mm, it.unit))
+            self.results_list.SetItem(row, 5, self._value_text(it.limit_mm, it.unit, limit=True))
+            self._shown.append(k)
+
+    def _clear_selection(self):
+        """Deselects tracks, vias, pads, footprints and drawings in Pcbnew."""
+        groups = (self.board.GetTracks(), self.board.GetPads(),
+                  self.board.GetFootprints(), self.board.GetDrawings())
+        for group in groups:
+            for it in group:
+                if it.IsSelected():
+                    it.ClearSelected()
+
+    def on_row_selected(self, event):
+        """
+        Click on a row: selects in Pcbnew the objects involved (pad,
+        capacitor, via, track) and centres the view on them. For the
+        stitching areas the view centres on the area shape and highlights it.
+        """
+        row = event.GetIndex()
+        if row < 0 or row >= len(self._shown):
+            return
+        k = self._shown[row]
+        it = self._issues[k]
+        # Stitching area: the area shape is selected (so it is highlighted) and
+        # the view centres on it. Selecting a marker is safe because
+        # clear_highlight deselects every marker before removing it.
+        if it.polys:
+            self._clear_selection()
+            shape = self._rings.get(k)
+            if shape is not None:
+                try:
+                    shape.SetSelected()
+                    pcbnew.FocusOnItem(shape)
+                except AttributeError:
+                    pass  # FocusOnItem not available in every build
+                except Exception as exc:
+                    self.status_label.SetLabel(_("Impossibile selezionare: {0}").format(exc))
+            pcbnew.Refresh()
+            return
+        # Other checks: the real board objects involved (pad, capacitor, via,
+        # track) are selected
+        items = list(it.items)
+        if not items:
+            self._clear_selection()
+            pcbnew.Refresh()
+            return
+        try:
+            self._clear_selection()
+            for obj in items:
+                obj.SetSelected()
+            try:
+                pcbnew.FocusOnItem(items[0])
+            except AttributeError:
+                pass  # not available in every build: the selection stays
+            pcbnew.Refresh()
+        except Exception as exc:
+            # The object may have been deleted after the checks
+            self.status_label.SetLabel(_("Impossibile selezionare: {0}").format(exc))
+
+    def on_cancel(self, event):
+        """Stops the running checks (they return what was found so far)."""
+        self._cancel_requested = True
+        self.status_label.SetLabel(_("Interruzione in corso..."))
+
+    def on_clear(self, event):
+        """Removes the markers of the last run from the board."""
+        if self.dialog.markers:
+            return_path.clear_highlight(self.board, self.dialog.markers)
+            self.dialog.markers = []
+        self._rings = {}
+        self.status_label.SetLabel("")
 
 
 class ReturnPathPanel(wx.Panel):

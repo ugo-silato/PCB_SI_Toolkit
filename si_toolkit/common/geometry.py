@@ -43,6 +43,26 @@ def sample_points_along_track(track, step_nm, max_samples=30):
     return points
 
 
+def is_teardrop(zone):
+    """
+    True if the zone is a teardrop added by KiCad where a track enters a pad
+    or a via. For KiCad a teardrop is a small zone of the pad's net with a
+    solid connection: it is copper, but not a plane or a pour.
+    """
+    fn = getattr(zone, "IsTeardropArea", None)  # KiCad 7-10 API
+    if fn is not None:
+        try:
+            if fn():
+                return True
+        except Exception:
+            pass
+    # Fallback: KiCad names the teardrops "$teardrop_..."
+    try:
+        return "teardrop" in zone.GetZoneName().lower()
+    except Exception:
+        return False
+
+
 def find_reference_zone(board, layer_id, net_name_filter=None):
     """
     Looks for the first filled ZONE on layer 'layer_id' that corresponds to a
@@ -62,7 +82,7 @@ def find_reference_zone(board, layer_id, net_name_filter=None):
         # undefined but belong to several layers
         if not zone.IsOnLayer(layer_id):
             continue
-        if not zone.IsFilled():
+        if not zone.IsFilled() or is_teardrop(zone):
             continue
         net_name = zone.GetNetname()
         if net_name_filter is None:
@@ -86,8 +106,8 @@ def find_reference_zones(board, layer_id, net_name_filter=None):
         # IsOnLayer: see the note in find_reference_zone (multilayer zones)
         if not zone.IsOnLayer(layer_id):
             continue
-        if not zone.IsFilled():
-            continue
+        if not zone.IsFilled() or is_teardrop(zone):
+            continue  # teardrops are not a plane
         if net_name_filter is None or net_name_filter.upper() in zone.GetNetname().upper():
             zones.append(zone)
     return zones

@@ -7,6 +7,7 @@ Drawn with wxPython (no matplotlib dependency), inside KiCad.
 Coordinates in mm, y axis pointing down as in Pcbnew.
 """
 import math
+import time
 
 import wx
 
@@ -100,6 +101,8 @@ class MapPanel(wx.Panel):
     # Context layers shown (switched from the checkboxes of the window)
     show_footprints = True
     show_others = True
+    # Moving arrows (animation driven by a timer of the window)
+    animate = False
 
     def __init__(self, parent, data, on_hover):
         super().__init__(parent, style=wx.FULL_REPAINT_ON_RESIZE)
@@ -359,6 +362,7 @@ class MapPanel(wx.Panel):
         i1 = min(ny, int((h - py) / cell_px) + 2)
         gc.SetPen(wx.Pen(wx.Colour(240, 240, 240), 1))
         length_max = 0.8 * step * cell_px
+        t_anim = time.monotonic()  # time for the moving arrows
         for i in range(i0 - i0 % step + step // 2, i1, step):
             for j in range(j0 - j0 % step + step // 2, j1, step):
                 m = mag[i, j]
@@ -369,6 +373,19 @@ class MapPanel(wx.Panel):
                 ux, uy = vx[i, j] / m, vy[i, j] / m
                 cx = px + (j + 0.5) * cell_px
                 cy = py + (i + 0.5) * cell_px
+                if self.animate:
+                    # Moving arrows: each one slides along its direction
+                    # over its grid step and starts again, faster where the
+                    # current is stronger; a per-position offset avoids the
+                    # whole grid moving in lockstep. The arrow fades in and
+                    # out at the ends of its run, so the jump is not seen.
+                    speed = 0.25 + 0.75 * min(1.0, (m / peak) ** 0.5)  # runs per second
+                    phase = (t_anim * speed + ((i * 7 + j * 13) % 17) / 17.0) % 1.0
+                    shift = (phase - 0.5) * step * cell_px
+                    cx += ux * shift
+                    cy += uy * shift
+                    alpha = int(240 * math.sin(math.pi * phase))
+                    gc.SetPen(wx.Pen(wx.Colour(240, 240, 240, max(0, alpha)), 1))
                 x0, y0 = cx - ux * L / 2, cy - uy * L / 2
                 x1, y1 = cx + ux * L / 2, cy + uy * L / 2
                 gc.StrokeLine(x0, y0, x1, y1)
@@ -475,6 +492,13 @@ class MapFrame(wx.Frame):
             self.cb_fp = wx.CheckBox(panel, label=_("Componenti"))
             self.cb_fp.SetValue(True)
             top.Add(self.cb_fp, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 12)
+        # Moving arrows: only when the map has arrows
+        self.cb_anim = None
+        if data.raster is not None and (data.raster.get("vec") or {}):
+            self.cb_anim = wx.CheckBox(panel, label=_("Frecce in movimento"))
+            self.cb_anim.SetToolTip(_("Le frecce scorrono nel verso della corrente, piu' veloci dove e' "
+                                      "piu' forte"))
+            top.Add(self.cb_anim, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 12)
         if data.others:
             self.cb_other = wx.CheckBox(panel, label=_("Altre tracce"))
             self.cb_other.SetValue(True)
@@ -489,6 +513,13 @@ class MapFrame(wx.Frame):
         for cb in (self.cb_fp, self.cb_other):
             if cb is not None:
                 cb.Bind(wx.EVT_CHECKBOX, self.on_context)
+        # Timer of the animation: about 25 frames per second, only while
+        # the checkbox is on; stopped when the window closes
+        self.timer = wx.Timer(self)
+        self.Bind(wx.EVT_TIMER, self.on_timer, self.timer)
+        if self.cb_anim is not None:
+            self.cb_anim.Bind(wx.EVT_CHECKBOX, self.on_anim)
+        self.Bind(wx.EVT_CLOSE, self.on_close_frame)
 
         sizer = wx.BoxSizer(wx.VERTICAL)
         sizer.Add(top, 0, wx.ALL, 8)
@@ -496,6 +527,26 @@ class MapFrame(wx.Frame):
         sizer.Add(self.info, 0, wx.ALL, 8)
         panel.SetSizer(sizer)
         self.data = data
+
+    def on_anim(self, event):
+        """Starts / stops the moving arrows."""
+        self.map.animate = self.cb_anim.GetValue()
+        if self.map.animate:
+            self.timer.Start(40)
+        else:
+            self.timer.Stop()
+            self.map.Refresh()
+
+    def on_timer(self, event):
+        """New frame of the animation; skipped while the window is minimized or hidden."""
+        if self.IsIconized() or not self.IsShown():
+            return
+        self.map.Refresh(False)
+
+    def on_close_frame(self, event):
+        """The timer must stop before the window is destroyed."""
+        self.timer.Stop()
+        event.Skip()
 
     def on_context(self, event):
         """Shows/hides components and other tracks (per window)."""

@@ -1,0 +1,5 @@
+{
+  "lc_currents": "+5V=2; VIN=5",
+  "lc_voltages": "",
+  "lc_groups": "SD_*"
+}

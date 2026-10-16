@@ -17,14 +17,22 @@ import sys
 import zipfile
 
 PLUGIN_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-VERSION = "1.1.0"
+# The version is written in one place only: common/version.py (read as text,
+# so this script runs with any Python, without importing the plugin)
+with open(os.path.join(PLUGIN_DIR, "common", "version.py"), encoding="utf-8") as _f:
+    VERSION = next(line.split("=", 1)[1].strip().strip('"') for line in _f if line.startswith("VERSION"))
 
 METADATA = {
     "$schema": "https://go.kicad.org/pcm/schemas/v2",
     "name": "PCB Signal Integrity Toolkit",
-    "description": "Return path, DC current/IR drop, impedance, diff pairs, crosstalk, openEMS EM simulation.",
+    "description": "Layout checks, return path, DC current/IR drop, impedance, diff pairs, crosstalk, openEMS EM simulation.",
     "description_full": (
         "Signal and power integrity checks on the open board:\n"
+        "- Layout checks: a smart DRC on the whole board (decoupling capacitor distance and"
+        " ground vias, layer changes without a return via, stitching via spacing, tracks over"
+        " plane gaps, plane edge, track width vs current, isolation, pair skew and length groups,"
+        " dead branches, acute angles, width steps, vias in pads, tombstoning, via current, crystal,"
+        " overlapping tracks)\n"
         "- Return Path: tracks crossing gaps in the reference plane; return current map"
         " (HF and DC) from an input pad to a ground exit, with loads found automatically"
         " and their currents estimated from type and value\n"
