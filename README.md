@@ -1,5 +1,18 @@
 # PCB Signal Integrity Toolkit for KiCad
+<!-- Donation button: opens my Ko-fi page ("Buy me a Transistor") -->
+<!-- The SVG image is hosted in my .github repository, so every README uses the same file -->
+<p align="center">
+  <a href="https://ko-fi.com/ugosilato">
+    <img src="https://raw.githubusercontent.com/ugo-silato/.github/main/buy-me-a-transistor.svg"
+         alt="Buy me a Transistor" width="350">
+  </a>
+</p>
 
+<!-- Short note shown below the button -->
+<p align="center">
+  Free and open source. If this tool saved you some time,<br>
+  a transistor helps me keep developing and sharing new ones ⚡
+</p>
 <img src="si_toolkit/icon_64.png" align="right" width="64">
 
 A KiCad 10 plugin (Pcbnew) that brings together signal- and power-integrity checks on the board you are designing:
